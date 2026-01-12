@@ -1,0 +1,63 @@
+{
+  "name": "@asifkibria/claude-code-toolkit",
+  "version": "1.0.0",
+  "description": "MCP server and CLI toolkit for maintaining, optimizing, and troubleshooting Claude Code installations",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "claude-code-toolkit": "dist/cli.js",
+    "cct": "dist/cli.js",
+    "claude-code-toolkit-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "cli": "node dist/cli.js",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "model-context-protocol",
+    "anthropic",
+    "cli",
+    "toolkit",
+    "maintenance",
+    "optimization",
+    "troubleshooting",
+    "conversation",
+    "context"
+  ],
+  "author": "Asif Kibria",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/asifkibria/claude-code-toolkit"
+  },
+  "bugs": {
+    "url": "https://github.com/asifkibria/claude-code-toolkit/issues"
+  },
+  "homepage": "https://github.com/asifkibria/claude-code-toolkit#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  }
+}
