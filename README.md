@@ -1,6 +1,6 @@
 # Claude Code Toolkit
 
-[![npm version](https://badge.fury.io/js/%40asifkibria%2Fclaude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
+[![npm version](https://img.shields.io/npm/v/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-30%20passing-brightgreen)](https://github.com/asifkibria/claude-code-toolkit)
 
