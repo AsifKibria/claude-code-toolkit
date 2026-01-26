@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)](https://github.com/asifkibria/claude-code-toolkit)
+[![Tests](https://img.shields.io/badge/tests-70%20passing-brightgreen)](https://github.com/asifkibria/claude-code-toolkit)
 
 A comprehensive MCP server and CLI toolkit for maintaining, optimizing, and troubleshooting your Claude Code installation.
 
@@ -172,6 +172,198 @@ Top 5 by size:
 ...
 ```
 
+### `cct context` - Estimate Context Size
+
+See how much context/tokens your conversations are using.
+
+### `cct analytics` - Usage Analytics Dashboard
+
+Get a comprehensive view of your Claude Code usage with activity trends, top projects, and tool statistics.
+
+```bash
+$ cct analytics
+
+╔══════════════════════════════════════════════════════════════╗
+║               USAGE ANALYTICS DASHBOARD                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+📊 OVERVIEW
+──────────────────────────────────────────────────
+  Conversations:    23
+  Total Messages:   12,456
+  Total Tokens:     ~2,345,678
+  Total Size:       156.2 MB
+  Active Projects:  8
+  Avg Msgs/Conv:    542
+  Avg Tokens/Conv:  ~102,000
+
+📈 ACTIVITY (Last 7 days)
+──────────────────────────────────────────────────
+  Mon │█████████████████████████│ 234
+  Tue │████████████████░░░░░░░░░│ 156
+  Wed │██████████████████░░░░░░░│ 178
+  ...
+
+🏆 TOP PROJECTS (by messages)
+──────────────────────────────────────────────────
+  -Users-me-myapp         │███████████████│ 2,341
+  -Users-me-another-proj  │████████░░░░░░░│ 1,234
+  ...
+
+🔧 TOP TOOLS
+──────────────────────────────────────────────────
+  Read                     1,234 (25%)
+  Edit                       987 (20%)
+  Bash                       654 (13%)
+  ...
+```
+
+### `cct duplicates` - Find Duplicate Content
+
+Scan for duplicate conversations and content (images, documents) that waste storage and context.
+
+```bash
+$ cct duplicates
+
+╔══════════════════════════════════════════════════════════════╗
+║               DUPLICATE DETECTION REPORT                     ║
+╚══════════════════════════════════════════════════════════════╝
+
+📊 SUMMARY
+──────────────────────────────────────────────────
+  Duplicate groups:    5
+  Duplicate images:    12
+  Duplicate documents: 3
+  Wasted space:        45.2 MB
+
+📁 DUPLICATE CONVERSATIONS
+──────────────────────────────────────────────────
+  [2 copies] Wasted: 12.5 MB
+    - -Users-me-myapp/conversation1.jsonl
+    - -Users-me-myapp-backup/conversation1.jsonl
+
+🖼️  DUPLICATE CONTENT
+──────────────────────────────────────────────────
+  🖼️ image [3 copies] ~2.1 MB wasted
+    - -Users-me-proj1/conv.jsonl:142
+    - -Users-me-proj1/conv.jsonl:856
+    ... and 1 more locations
+
+💡 RECOMMENDATIONS
+──────────────────────────────────────────────────
+  - Review duplicate conversations and consider removing copies
+  - Same images appear multiple times in your conversations
+```
+
+### `cct archive` - Archive Old Conversations
+
+Move inactive conversations to an archive directory to free up space.
+
+```bash
+$ cct archive --days 60 --dry-run
+
+╔══════════════════════════════════════════════════════════════╗
+║               CONVERSATION ARCHIVE REPORT                    ║
+╚══════════════════════════════════════════════════════════════╝
+
+📊 SUMMARY
+──────────────────────────────────────────────────
+  Eligible conversations: 8
+  Total size:            45.2 MB
+
+📁 ARCHIVE CANDIDATES
+──────────────────────────────────────────────────
+  ...-Users-me-old-project/abc123.jsonl
+    65 days inactive, 234 msgs, 12.5 MB
+  ...-Users-me-another-old/def456.jsonl
+    45 days inactive, 156 msgs, 8.2 MB
+  ...
+
+📋 DRY RUN - No changes made
+──────────────────────────────────────────────────
+  Would archive: 8 conversations
+  Would free:    45.2 MB
+  Archive to:    ~/.claude/archive
+```
+
+### `cct maintenance` - Scheduled Maintenance
+
+Run automated maintenance checks and actions.
+
+```bash
+$ cct maintenance
+
+╔══════════════════════════════════════════════════════════════╗
+║               MAINTENANCE REPORT                             ║
+╚══════════════════════════════════════════════════════════════╝
+
+📊 STATUS
+──────────────────────────────────────────────────
+  ⚠ Needs Attention
+
+📋 PENDING ACTIONS (dry run)
+──────────────────────────────────────────────────
+  🔧 Oversized content detected
+     3 item(s) (~2.3 MB)
+  🗑️ Backups older than 7 days
+     5 item(s) (~89.3 MB)
+  📦 Conversations inactive for 60+ days
+     8 item(s) (~45.2 MB)
+
+💡 RECOMMENDATIONS
+──────────────────────────────────────────────────
+  - Run 'cct fix' to remove oversized content
+  - Run 'cct cleanup --days 7' to remove old backups
+  - Run 'cct archive --days 60' to archive inactive conversations
+
+# Show scheduled maintenance setup
+$ cct maintenance --schedule
+
+# Run maintenance automatically
+$ cct maintenance --auto
+```
+
+```bash
+# Summary of all conversations by context size
+$ cct context
+
+Context Usage Summary
+
+Total conversations: 23
+Combined tokens: ~1,234,567
+
+Top 10 by context size:
+
+-Users-me-projects-myapp/abc123.jsonl
+  ~125,000 tokens (456 messages)
+  ⚠ Context exceeds 100K tokens - consider archiving older messages
+
+-Users-me-projects-another/def456.jsonl
+  ~45,000 tokens (234 messages)
+...
+
+# Detailed breakdown for a specific file
+$ cct context -f ~/.claude/projects/-Users-me-myapp/conversation.jsonl
+
+Context Size Estimate
+────────────────────────────────────────
+Total: ~125,000 tokens
+Messages: 456
+
+Breakdown:
+  User messages:      12,500 tokens
+  Assistant messages: 85,000 tokens
+  Tool calls:         5,000 tokens
+  Tool results:       20,000 tokens
+  Images:             2,500 tokens
+
+Largest message: Line 342 (assistant)
+  ~8,500 tokens
+
+Warnings:
+  ⚠ Context exceeds 100K tokens - consider archiving older messages
+```
+
 ### `cct backups` - List Backups
 
 See all backup files.
@@ -218,11 +410,40 @@ $ cct cleanup --days 7
 ✓ Deleted 3 backup(s)
 ```
 
+### `cct export` - Export Conversation
+
+Export a conversation to markdown or JSON for backup, sharing, or archiving.
+
+```bash
+# Export to markdown (default)
+$ cct export -f ~/.claude/projects/-Users-me-myapp/conversation.jsonl
+
+✓ Exported 156 messages to conversation.md
+
+# Export to JSON
+$ cct export -f conversation.jsonl --format json -o backup.json
+
+✓ Exported 156 messages to backup.json
+
+# Include tool results in export
+$ cct export -f conversation.jsonl --with-tools
+
+✓ Exported 156 messages to conversation.md
+```
+
+**Export formats:**
+
+- **Markdown**: Human-readable format with headers, code blocks, and tool summaries
+- **JSON**: Structured format with full message metadata for programmatic use
+
 ## CLI Options Reference
 
 | Option | Description |
 |--------|-------------|
 | `-f, --file <path>` | Target a specific file instead of all conversations |
+| `-o, --output <path>` | For export: output file path |
+| `--format <type>` | For export: `markdown` or `json` (default: markdown) |
+| `--with-tools` | For export: include tool results in output |
 | `-d, --dry-run` | Preview changes without making them |
 | `--no-backup` | Skip creating backups when fixing (not recommended) |
 | `--days <n>` | For cleanup: delete backups older than n days (default: 7) |
@@ -239,8 +460,14 @@ When installed as an MCP server, these tools are available to Claude:
 |------|-------------|
 | `health_check` | Quick health check with recommendations |
 | `get_conversation_stats` | Detailed statistics about conversations |
+| `estimate_context_size` | Estimate token/context usage of conversations |
+| `usage_analytics` | Usage analytics dashboard with trends and breakdowns |
+| `find_duplicates` | Find duplicate conversations and content |
+| `archive_conversations` | Archive old/inactive conversations |
+| `run_maintenance` | Run maintenance checks and actions |
 | `scan_image_issues` | Scan for oversized content (images, PDFs, documents) |
 | `fix_image_issues` | Fix detected issues with automatic backups |
+| `export_conversation` | Export conversation to markdown or JSON format |
 | `list_backups` | List all backup files |
 | `restore_backup` | Restore a conversation from backup |
 | `cleanup_backups` | Delete old backups to free space |
@@ -294,12 +521,52 @@ cct cleanup --days 30 --dry-run  # Preview
 cct cleanup --days 30            # Delete
 ```
 
+### I want to save or share a conversation
+
+```bash
+cct export -f ~/.claude/projects/path/to/conversation.jsonl
+# Creates conversation.md in current directory
+```
+
+### My conversations are getting slow
+
+```bash
+cct context  # See which conversations are using the most tokens
+```
+
+### I want to see my usage patterns
+
+```bash
+cct analytics  # Full usage dashboard with trends and stats
+```
+
+### I have duplicate content wasting space
+
+```bash
+cct duplicates  # Find duplicate conversations and content
+```
+
+### I want to clean up old conversations
+
+```bash
+cct archive --days 60 --dry-run  # Preview what would be archived
+cct archive --days 60            # Archive conversations inactive for 60+ days
+```
+
+### I want automated maintenance
+
+```bash
+cct maintenance              # Check what needs attention
+cct maintenance --auto       # Automatically fix issues
+cct maintenance --schedule   # Get cron/launchd setup instructions
+```
+
 ## Development
 
 ```bash
 npm install        # Install dependencies
 npm run build      # Build TypeScript
-npm test           # Run tests (38 tests)
+npm test           # Run tests (70 tests)
 npm run dev        # Watch mode
 npm run test:coverage  # Coverage report
 ```

@@ -12,6 +12,19 @@ import {
   findBackupFiles,
   restoreFromBackup,
   deleteOldBackups,
+  exportConversation,
+  exportConversationToFile,
+  estimateContextSize,
+  formatContextEstimate,
+  generateUsageAnalytics,
+  formatUsageAnalytics,
+  findDuplicates,
+  formatDuplicateReport,
+  findArchiveCandidates,
+  archiveConversations,
+  formatArchiveReport,
+  runMaintenance,
+  formatMaintenanceReport,
   MIN_PROBLEMATIC_BASE64_SIZE,
   MIN_PROBLEMATIC_TEXT_SIZE,
 } from "../lib/scanner.js";
@@ -570,6 +583,464 @@ describe("Scanner Module", () => {
       expect(result.deleted[0]).toBe(oldBackup);
       expect(fs.existsSync(oldBackup)).toBe(false);
       expect(fs.existsSync(newBackup)).toBe(true);
+    });
+  });
+
+  describe("exportConversation", () => {
+    it("should export conversation to markdown format", () => {
+      const filePath = createTestFile("export-test.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "Hello Claude" }] } },
+        { message: { role: "assistant", content: [{ type: "text", text: "Hello! How can I help?" }] } },
+      ]);
+
+      const result = exportConversation(filePath, { format: "markdown" });
+      expect(result.messageCount).toBe(2);
+      expect(result.format).toBe("markdown");
+      expect(result.content).toContain("Hello Claude");
+      expect(result.content).toContain("Hello! How can I help?");
+      expect(result.content).toContain("# Conversation Export");
+    });
+
+    it("should export conversation to JSON format", () => {
+      const filePath = createTestFile("export-json.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "Test message" }] } },
+      ]);
+
+      const result = exportConversation(filePath, { format: "json" });
+      expect(result.format).toBe("json");
+      const parsed = JSON.parse(result.content);
+      expect(parsed.messageCount).toBe(1);
+      expect(parsed.messages[0].content).toBe("Test message");
+    });
+
+    it("should handle images as placeholders", () => {
+      const filePath = createTestFile("export-image.jsonl", [
+        {
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: "Check this:" },
+              { type: "image", source: { type: "base64", data: "abc" } },
+            ],
+          },
+        },
+      ]);
+
+      const result = exportConversation(filePath, { format: "markdown" });
+      expect(result.content).toContain("Check this:");
+      expect(result.content).toContain("[Image]");
+    });
+
+    it("should include tool results when requested", () => {
+      const filePath = createTestFile("export-tools.jsonl", [
+        {
+          message: { role: "assistant", content: [{ type: "tool_use", name: "read_file", input: {} }] },
+          toolUseResult: { name: "read_file", content: "file content here" },
+        },
+      ]);
+
+      const result = exportConversation(filePath, { format: "markdown", includeToolResults: true });
+      expect(result.content).toContain("`read_file`");
+      expect(result.content).toContain("file content here");
+    });
+  });
+
+  describe("exportConversationToFile", () => {
+    it("should write export to file", () => {
+      const sourcePath = createTestFile("source.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "Test" }] } },
+      ]);
+      const outputPath = path.join(TEST_DIR, "export.md");
+
+      const result = exportConversationToFile(sourcePath, outputPath, { format: "markdown" });
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(fs.existsSync(outputPath)).toBe(true);
+
+      const content = fs.readFileSync(outputPath, "utf-8");
+      expect(content).toContain("Test");
+    });
+
+    it("should handle non-existent source file", () => {
+      const result = exportConversationToFile("/nonexistent.jsonl", "/output.md", { format: "markdown" });
+      expect(result.success).toBe(false);
+      expect(result.messageCount).toBe(0);
+    });
+  });
+
+  describe("estimateContextSize", () => {
+    it("should estimate tokens for text messages", () => {
+      const filePath = createTestFile("context-text.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "Hello world" }] } },
+        { message: { role: "assistant", content: [{ type: "text", text: "Hi there! How can I help you today?" }] } },
+      ]);
+
+      const result = estimateContextSize(filePath);
+      expect(result.messageCount).toBe(2);
+      expect(result.totalTokens).toBeGreaterThan(0);
+      expect(result.breakdown.userTokens).toBeGreaterThan(0);
+      expect(result.breakdown.assistantTokens).toBeGreaterThan(0);
+    });
+
+    it("should estimate tokens for images", () => {
+      const filePath = createTestFile("context-image.jsonl", [
+        {
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: "Check this image:" },
+              { type: "image", source: { type: "base64", data: createLargeBase64(50000) } },
+            ],
+          },
+        },
+      ]);
+
+      const result = estimateContextSize(filePath);
+      expect(result.breakdown.imageTokens).toBeGreaterThan(0);
+      expect(result.breakdown.userTokens).toBeGreaterThan(0);
+    });
+
+    it("should estimate tokens for tool usage", () => {
+      const filePath = createTestFile("context-tools.jsonl", [
+        {
+          message: {
+            role: "assistant",
+            content: [{ type: "tool_use", name: "read_file", input: { path: "/test.txt" } }],
+          },
+          toolUseResult: { name: "read_file", content: "File contents here" },
+        },
+      ]);
+
+      const result = estimateContextSize(filePath);
+      expect(result.breakdown.toolUseTokens).toBeGreaterThan(0);
+      expect(result.breakdown.toolResultTokens).toBeGreaterThan(0);
+    });
+
+    it("should track largest message", () => {
+      const filePath = createTestFile("context-largest.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "Short" }] } },
+        { message: { role: "assistant", content: [{ type: "text", text: "A".repeat(1000) }] } },
+        { message: { role: "user", content: [{ type: "text", text: "Also short" }] } },
+      ]);
+
+      const result = estimateContextSize(filePath);
+      expect(result.largestMessage).not.toBeNull();
+      expect(result.largestMessage!.line).toBe(2);
+      expect(result.largestMessage!.role).toBe("assistant");
+    });
+
+    it("should add warnings for high context usage", () => {
+      const filePath = createTestFile("context-large.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "A".repeat(500000) }] } },
+      ]);
+
+      const result = estimateContextSize(filePath);
+      expect(result.warnings.length).toBeGreaterThan(0);
+    });
+
+    it("should handle non-existent file", () => {
+      const result = estimateContextSize("/nonexistent.jsonl");
+      expect(result.totalTokens).toBe(0);
+      expect(result.messageCount).toBe(0);
+      expect(result.warnings).toContain("Could not read file");
+    });
+  });
+
+  describe("formatContextEstimate", () => {
+    it("should format estimate as readable text", () => {
+      const filePath = createTestFile("format-test.jsonl", [
+        { message: { role: "user", content: [{ type: "text", text: "Test message" }] } },
+      ]);
+
+      const estimate = estimateContextSize(filePath);
+      const formatted = formatContextEstimate(estimate);
+
+      expect(formatted).toContain("Context Size Estimate");
+      expect(formatted).toContain("Total:");
+      expect(formatted).toContain("tokens");
+      expect(formatted).toContain("User messages:");
+    });
+  });
+
+  describe("generateUsageAnalytics", () => {
+    it("should generate analytics for directory with conversations", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-test-proj1"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-test-proj1", "conv1.jsonl");
+      const content = [
+        { message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: new Date().toISOString() },
+        { message: { role: "assistant", content: [{ type: "text", text: "Hi there!" }] }, timestamp: new Date().toISOString() },
+      ];
+      fs.writeFileSync(filePath, content.map(l => JSON.stringify(l)).join("\n"), "utf-8");
+
+      const analytics = generateUsageAnalytics(path.join(TEST_DIR, "projects"), 30);
+
+      expect(analytics.overview.totalConversations).toBe(1);
+      expect(analytics.overview.totalMessages).toBe(2);
+      expect(analytics.overview.totalTokens).toBeGreaterThan(0);
+      expect(analytics.topProjects.length).toBeGreaterThan(0);
+    });
+
+    it("should track tool usage", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-test-proj2"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-test-proj2", "conv2.jsonl");
+      const content = [
+        {
+          message: {
+            role: "assistant",
+            content: [
+              { type: "tool_use", name: "read_file", input: { path: "/test.txt" } },
+              { type: "tool_use", name: "write_file", input: { path: "/out.txt" } },
+            ],
+          },
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      fs.writeFileSync(filePath, content.map(l => JSON.stringify(l)).join("\n"), "utf-8");
+
+      const analytics = generateUsageAnalytics(path.join(TEST_DIR, "projects"), 30);
+
+      expect(analytics.toolUsage.length).toBeGreaterThan(0);
+      expect(analytics.toolUsage.some(t => t.name === "read_file")).toBe(true);
+      expect(analytics.toolUsage.some(t => t.name === "write_file")).toBe(true);
+    });
+
+    it("should handle empty directory", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "empty-projects"), { recursive: true });
+
+      const analytics = generateUsageAnalytics(path.join(TEST_DIR, "empty-projects"), 30);
+
+      expect(analytics.overview.totalConversations).toBe(0);
+      expect(analytics.overview.totalMessages).toBe(0);
+      expect(analytics.topProjects).toHaveLength(0);
+    });
+
+    it("should include daily activity for last N days", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-test-proj3"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-test-proj3", "conv3.jsonl");
+      fs.writeFileSync(filePath, JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Test" }] } }), "utf-8");
+
+      const analytics = generateUsageAnalytics(path.join(TEST_DIR, "projects"), 7);
+
+      expect(analytics.dailyActivity.length).toBeLessThanOrEqual(7);
+    });
+  });
+
+  describe("formatUsageAnalytics", () => {
+    it("should format analytics as readable dashboard", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-test-fmt"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-test-fmt", "conv.jsonl");
+      fs.writeFileSync(filePath, JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Test" }] } }), "utf-8");
+
+      const analytics = generateUsageAnalytics(path.join(TEST_DIR, "projects"), 30);
+      const formatted = formatUsageAnalytics(analytics);
+
+      expect(formatted).toContain("USAGE ANALYTICS DASHBOARD");
+      expect(formatted).toContain("OVERVIEW");
+      expect(formatted).toContain("Conversations:");
+      expect(formatted).toContain("ACTIVITY");
+    });
+  });
+
+  describe("findDuplicates", () => {
+    it("should detect duplicate conversations with same content", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-dup-proj1"), { recursive: true });
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-dup-proj2"), { recursive: true });
+
+      const content = JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Same content in both files" }] } });
+
+      fs.writeFileSync(path.join(TEST_DIR, "projects", "-Users-dup-proj1", "conv1.jsonl"), content, "utf-8");
+      fs.writeFileSync(path.join(TEST_DIR, "projects", "-Users-dup-proj2", "conv2.jsonl"), content, "utf-8");
+
+      const report = findDuplicates(path.join(TEST_DIR, "projects"));
+
+      expect(report.conversationDuplicates.length).toBeGreaterThan(0);
+      expect(report.conversationDuplicates[0].locations.length).toBe(2);
+    });
+
+    it("should detect duplicate images across conversations", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-img-dup"), { recursive: true });
+
+      const imageData = "A".repeat(5000);
+      const content = [
+        { message: { role: "user", content: [{ type: "image", source: { type: "base64", data: imageData } }] } },
+        { message: { role: "user", content: [{ type: "image", source: { type: "base64", data: imageData } }] } },
+      ];
+
+      fs.writeFileSync(
+        path.join(TEST_DIR, "projects", "-Users-img-dup", "conv.jsonl"),
+        content.map(l => JSON.stringify(l)).join("\n"),
+        "utf-8"
+      );
+
+      const report = findDuplicates(path.join(TEST_DIR, "projects"));
+
+      expect(report.contentDuplicates.length).toBeGreaterThan(0);
+      expect(report.summary.duplicateImages).toBeGreaterThan(0);
+    });
+
+    it("should handle empty directory", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "empty-dup"), { recursive: true });
+
+      const report = findDuplicates(path.join(TEST_DIR, "empty-dup"));
+
+      expect(report.totalDuplicateGroups).toBe(0);
+      expect(report.totalWastedSize).toBe(0);
+    });
+
+    it("should calculate wasted size correctly", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-size-test"), { recursive: true });
+
+      const content = JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Test content" }] } });
+
+      fs.writeFileSync(path.join(TEST_DIR, "projects", "-Users-size-test", "conv1.jsonl"), content, "utf-8");
+      fs.writeFileSync(path.join(TEST_DIR, "projects", "-Users-size-test", "conv2.jsonl"), content, "utf-8");
+      fs.writeFileSync(path.join(TEST_DIR, "projects", "-Users-size-test", "conv3.jsonl"), content, "utf-8");
+
+      const report = findDuplicates(path.join(TEST_DIR, "projects"));
+
+      const dupGroup = report.conversationDuplicates.find(g => g.locations.length === 3);
+      if (dupGroup) {
+        const fileSize = fs.statSync(path.join(TEST_DIR, "projects", "-Users-size-test", "conv1.jsonl")).size;
+        expect(dupGroup.wastedSize).toBe(fileSize * 2);
+      }
+    });
+  });
+
+  describe("formatDuplicateReport", () => {
+    it("should format report as readable text", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-fmt-dup"), { recursive: true });
+      fs.writeFileSync(
+        path.join(TEST_DIR, "projects", "-Users-fmt-dup", "conv.jsonl"),
+        JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Test" }] } }),
+        "utf-8"
+      );
+
+      const report = findDuplicates(path.join(TEST_DIR, "projects"));
+      const formatted = formatDuplicateReport(report);
+
+      expect(formatted).toContain("DUPLICATE DETECTION REPORT");
+      expect(formatted).toContain("SUMMARY");
+      expect(formatted).toContain("Duplicate groups:");
+    });
+  });
+
+  describe("findArchiveCandidates", () => {
+    it("should find old conversations", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-archive-test"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-archive-test", "old.jsonl");
+      fs.writeFileSync(filePath, JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Old" }] } }), "utf-8");
+
+      const oldDate = new Date();
+      oldDate.setDate(oldDate.getDate() - 45);
+      fs.utimesSync(filePath, oldDate, oldDate);
+
+      const candidates = findArchiveCandidates(path.join(TEST_DIR, "projects"), { minDaysInactive: 30 });
+
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(candidates[0].daysSinceActivity).toBeGreaterThanOrEqual(30);
+    });
+
+    it("should not include recent conversations", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-archive-recent"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-archive-recent", "recent.jsonl");
+      fs.writeFileSync(filePath, JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Recent" }] } }), "utf-8");
+
+      const candidates = findArchiveCandidates(path.join(TEST_DIR, "projects"), { minDaysInactive: 30 });
+
+      const recentCandidate = candidates.find(c => c.file.includes("recent.jsonl"));
+      expect(recentCandidate).toBeUndefined();
+    });
+
+    it("should handle empty directory", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "empty-archive"), { recursive: true });
+
+      const candidates = findArchiveCandidates(path.join(TEST_DIR, "empty-archive"), { minDaysInactive: 30 });
+
+      expect(candidates).toHaveLength(0);
+    });
+  });
+
+  describe("archiveConversations", () => {
+    it("should perform dry run without moving files", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-archive-dry"), { recursive: true });
+      const filePath = path.join(TEST_DIR, "projects", "-Users-archive-dry", "conv.jsonl");
+      fs.writeFileSync(filePath, JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Test" }] } }), "utf-8");
+
+      const oldDate = new Date();
+      oldDate.setDate(oldDate.getDate() - 45);
+      fs.utimesSync(filePath, oldDate, oldDate);
+
+      const result = archiveConversations(path.join(TEST_DIR, "projects"), { minDaysInactive: 30, dryRun: true });
+
+      expect(result.archived.length).toBeGreaterThan(0);
+      expect(fs.existsSync(filePath)).toBe(true);
+    });
+  });
+
+  describe("formatArchiveReport", () => {
+    it("should format archive report", () => {
+      const candidates = [{ file: "/test/conv.jsonl", lastModified: new Date(), messageCount: 10, sizeBytes: 1000, daysSinceActivity: 45 }];
+      const formatted = formatArchiveReport(candidates);
+
+      expect(formatted).toContain("CONVERSATION ARCHIVE REPORT");
+      expect(formatted).toContain("ARCHIVE CANDIDATES");
+    });
+
+    it("should show no candidates message", () => {
+      const formatted = formatArchiveReport([]);
+
+      expect(formatted).toContain("No conversations eligible for archiving");
+    });
+  });
+
+  describe("runMaintenance", () => {
+    it("should return healthy status for clean directory", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-maint-clean"), { recursive: true });
+      fs.writeFileSync(
+        path.join(TEST_DIR, "projects", "-Users-maint-clean", "conv.jsonl"),
+        JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Clean" }] } }),
+        "utf-8"
+      );
+
+      const report = runMaintenance(path.join(TEST_DIR, "projects"), { dryRun: true });
+
+      expect(report.status).toBe("healthy");
+    });
+
+    it("should detect issues needing fix", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-maint-issues"), { recursive: true });
+      fs.writeFileSync(
+        path.join(TEST_DIR, "projects", "-Users-maint-issues", "conv.jsonl"),
+        JSON.stringify({
+          message: {
+            role: "user",
+            content: [{ type: "image", source: { type: "base64", data: "A".repeat(MIN_PROBLEMATIC_BASE64_SIZE + 1) } }],
+          },
+        }),
+        "utf-8"
+      );
+
+      const report = runMaintenance(path.join(TEST_DIR, "projects"), { dryRun: true });
+
+      expect(report.status).toBe("critical");
+      expect(report.actions.some(a => a.type === "fix")).toBe(true);
+    });
+  });
+
+  describe("formatMaintenanceReport", () => {
+    it("should format maintenance report", () => {
+      fs.mkdirSync(path.join(TEST_DIR, "projects", "-Users-maint-fmt"), { recursive: true });
+      fs.writeFileSync(
+        path.join(TEST_DIR, "projects", "-Users-maint-fmt", "conv.jsonl"),
+        JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "Test" }] } }),
+        "utf-8"
+      );
+
+      const report = runMaintenance(path.join(TEST_DIR, "projects"), { dryRun: true });
+      const formatted = formatMaintenanceReport(report);
+
+      expect(formatted).toContain("MAINTENANCE REPORT");
+      expect(formatted).toContain("STATUS");
     });
   });
 });

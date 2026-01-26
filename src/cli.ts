@@ -15,7 +15,22 @@ import {
   getConversationStats,
   restoreFromBackup,
   deleteOldBackups,
+  exportConversationToFile,
+  estimateContextSize,
+  formatContextEstimate,
+  generateUsageAnalytics,
+  formatUsageAnalytics,
+  findDuplicates,
+  formatDuplicateReport,
+  findArchiveCandidates,
+  archiveConversations,
+  formatArchiveReport,
+  runMaintenance,
+  formatMaintenanceReport,
+  generateCronSchedule,
+  generateLaunchdPlist,
   type IssueType,
+  type ExportFormat,
 } from "./lib/scanner.js";
 
 function formatContentType(type: IssueType): string {
@@ -43,7 +58,7 @@ function formatDate(date: Date): string {
 
 function printHelp() {
   console.log(`
-Claude Code Toolkit v1.0.2
+Claude Code Toolkit v1.0.7
 Maintain, optimize, and troubleshoot your Claude Code installation.
 Fixes oversized images, PDFs, documents, and large text content.
 
@@ -54,30 +69,46 @@ USAGE:
 COMMANDS:
   health            Quick health check (start here!)
   stats             Show conversation statistics
+  context           Estimate context/token usage
+  analytics         Usage analytics dashboard
+  duplicates        Find duplicate content and conversations
+  archive           Archive old/inactive conversations
+  maintenance       Run maintenance checks and actions
   scan              Scan for issues (dry run)
   fix               Fix all detected issues
+  export            Export conversation to markdown or JSON
   backups           List backup files
   restore <path>    Restore from a backup file
   cleanup           Delete old backup files
 
 OPTIONS:
   -f, --file <path>     Target a specific file
+  -o, --output <path>   Output file path (for export)
+  --format <type>       Export format: markdown or json (default: markdown)
+  --with-tools          Include tool results in export
   -d, --dry-run         Show what would be done without making changes
   --no-backup           Skip creating backups when fixing (not recommended)
-  --days <n>            For cleanup: delete backups older than n days (default: 7)
+  --days <n>            For cleanup/archive: days threshold (default: 7/30)
   --limit <n>           For stats: limit results (default: 10)
   --sort <field>        For stats: sort by size|messages|images|modified
+  --auto                For maintenance: run automatically without prompts
+  --schedule            For maintenance: show cron/launchd setup
   -h, --help            Show this help message
   -v, --version         Show version
 
 EXAMPLES:
   cct health                        # Quick health check
   cct stats --limit 5 --sort size   # Top 5 largest conversations
+  cct context -f /path/to/file      # Estimate context/token usage
+  cct analytics                     # Usage analytics dashboard
+  cct duplicates                    # Find duplicate content
+  cct archive --days 60 --dry-run   # Preview conversations to archive
+  cct maintenance                   # Run maintenance checks
+  cct maintenance --schedule        # Show scheduled maintenance setup
   cct scan                          # Scan for issues
   cct fix                           # Fix all issues
-  cct fix -f /path/to/file          # Fix specific file
+  cct export -f /path/to/file       # Export to markdown
   cct cleanup --days 30 --dry-run   # Preview old backups to delete
-  cct cleanup --days 30             # Delete old backups
 
 For more info: https://github.com/asifkibria/claude-code-toolkit
 `);
@@ -86,20 +117,30 @@ For more info: https://github.com/asifkibria/claude-code-toolkit
 function parseArgs(args: string[]): {
   command: string;
   file?: string;
+  output?: string;
+  format: ExportFormat;
+  withTools: boolean;
   dryRun: boolean;
   noBackup: boolean;
   days: number;
   limit: number;
   sort: string;
+  auto: boolean;
+  schedule: boolean;
 } {
   const result = {
     command: "",
     file: undefined as string | undefined,
+    output: undefined as string | undefined,
+    format: "markdown" as ExportFormat,
+    withTools: false,
     dryRun: false,
     noBackup: false,
     days: 7,
     limit: 10,
     sort: "size",
+    auto: false,
+    schedule: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -111,12 +152,30 @@ function parseArgs(args: string[]): {
     }
 
     if (arg === "-v" || arg === "--version") {
-      console.log("1.0.2");
+      console.log("1.0.7");
       process.exit(0);
     }
 
     if (arg === "-f" || arg === "--file") {
       result.file = args[++i];
+      continue;
+    }
+
+    if (arg === "-o" || arg === "--output") {
+      result.output = args[++i];
+      continue;
+    }
+
+    if (arg === "--format") {
+      const fmt = args[++i];
+      if (fmt === "json" || fmt === "markdown") {
+        result.format = fmt;
+      }
+      continue;
+    }
+
+    if (arg === "--with-tools") {
+      result.withTools = true;
       continue;
     }
 
@@ -142,6 +201,16 @@ function parseArgs(args: string[]): {
 
     if (arg === "--sort") {
       result.sort = args[++i];
+      continue;
+    }
+
+    if (arg === "--auto") {
+      result.auto = true;
+      continue;
+    }
+
+    if (arg === "--schedule") {
+      result.schedule = true;
       continue;
     }
 
@@ -385,6 +454,163 @@ async function cmdCleanup(days: number, dryRun: boolean) {
   }
 }
 
+async function cmdExport(file: string | undefined, output: string | undefined, format: ExportFormat, withTools: boolean) {
+  if (!file) {
+    console.error("Please specify a conversation file with -f or --file");
+    console.error("Example: cct export -f ~/.claude/projects/myproject/conversation.jsonl");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(file)) {
+    console.error(`File not found: ${file}`);
+    process.exit(1);
+  }
+
+  const ext = format === "json" ? ".json" : ".md";
+  const outputPath = output || file.replace(".jsonl", `-export${ext}`);
+
+  console.log(`Exporting conversation...`);
+  console.log(`  Source: ${file}`);
+  console.log(`  Format: ${format}`);
+  console.log(`  Output: ${outputPath}`);
+  console.log();
+
+  const result = exportConversationToFile(file, outputPath, {
+    format,
+    includeToolResults: withTools,
+    includeTimestamps: true,
+  });
+
+  if (!result.success) {
+    console.error(`\x1b[31mError: ${result.error}\x1b[0m`);
+    process.exit(1);
+  }
+
+  console.log(`\x1b[32m✓ Exported ${result.messageCount} messages to ${outputPath}\x1b[0m`);
+}
+
+async function cmdContext(file?: string) {
+  if (!file) {
+    // If no file specified, show summary for all conversations
+    if (!fs.existsSync(PROJECTS_DIR)) {
+      console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+      process.exit(1);
+    }
+
+    const files = findAllJsonlFiles(PROJECTS_DIR);
+    const estimates = files.map((f) => {
+      try {
+        return estimateContextSize(f);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean) as ReturnType<typeof estimateContextSize>[];
+
+    estimates.sort((a, b) => b.totalTokens - a.totalTokens);
+
+    const totalTokens = estimates.reduce((sum, e) => sum + e.totalTokens, 0);
+
+    console.log("Context Usage Summary\n");
+    console.log(`Total conversations: ${estimates.length}`);
+    console.log(`Combined tokens: ~${totalTokens.toLocaleString()}\n`);
+
+    console.log("Top 10 by context size:\n");
+
+    for (const estimate of estimates.slice(0, 10)) {
+      const relPath = path.relative(PROJECTS_DIR, estimate.file);
+      const shortPath = relPath.length > 50 ? "..." + relPath.slice(-47) : relPath;
+      console.log(`\x1b[36m${shortPath}\x1b[0m`);
+      console.log(`  ~${estimate.totalTokens.toLocaleString()} tokens (${estimate.messageCount} messages)`);
+      if (estimate.warnings.length > 0) {
+        console.log(`  \x1b[33m⚠ ${estimate.warnings[0]}\x1b[0m`);
+      }
+      console.log();
+    }
+
+    return;
+  }
+
+  if (!fs.existsSync(file)) {
+    console.error(`File not found: ${file}`);
+    process.exit(1);
+  }
+
+  const estimate = estimateContextSize(file);
+  console.log(formatContextEstimate(estimate));
+}
+
+async function cmdAnalytics() {
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  console.log("Generating analytics...\n");
+  const analytics = generateUsageAnalytics(PROJECTS_DIR, 30);
+  console.log(formatUsageAnalytics(analytics));
+}
+
+async function cmdDuplicates() {
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  console.log("Scanning for duplicates...\n");
+  const report = findDuplicates(PROJECTS_DIR);
+  console.log(formatDuplicateReport(report));
+}
+
+async function cmdArchive(days: number, dryRun: boolean) {
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  const archiveDays = days > 7 ? days : 30;
+  console.log(`Finding conversations inactive for ${archiveDays}+ days...\n`);
+
+  const candidates = findArchiveCandidates(PROJECTS_DIR, { minDaysInactive: archiveDays });
+
+  if (candidates.length === 0) {
+    console.log("✓ No conversations eligible for archiving.\n");
+    return;
+  }
+
+  const result = archiveConversations(PROJECTS_DIR, { minDaysInactive: archiveDays, dryRun });
+  console.log(formatArchiveReport(candidates, result, dryRun));
+
+  if (dryRun && candidates.length > 0) {
+    console.log("\x1b[33mRun without --dry-run to archive these conversations.\x1b[0m\n");
+  }
+}
+
+async function cmdMaintenance(dryRun: boolean, auto: boolean, schedule: boolean) {
+  if (schedule) {
+    console.log("Scheduled Maintenance Setup\n");
+    console.log("=== For macOS (launchd) ===");
+    console.log("Save this to ~/Library/LaunchAgents/com.claude-code-toolkit.maintenance.plist:\n");
+    console.log(generateLaunchdPlist());
+    console.log("\nThen run: launchctl load ~/Library/LaunchAgents/com.claude-code-toolkit.maintenance.plist\n");
+    console.log("=== For Linux/Unix (cron) ===\n");
+    console.log(generateCronSchedule());
+    return;
+  }
+
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  console.log("Running maintenance checks...\n");
+  const report = runMaintenance(PROJECTS_DIR, { dryRun: !auto });
+  console.log(formatMaintenanceReport(report, !auto));
+
+  if (!auto && report.actions.length > 0) {
+    console.log("\x1b[33mRun with --auto to perform maintenance actions automatically.\x1b[0m\n");
+  }
+}
+
 async function cmdHealth() {
   if (!fs.existsSync(PROJECTS_DIR)) {
     console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
@@ -448,6 +674,24 @@ async function main() {
       break;
     case "stats":
       await cmdStats(args.limit, args.sort);
+      break;
+    case "context":
+      await cmdContext(args.file);
+      break;
+    case "analytics":
+      await cmdAnalytics();
+      break;
+    case "duplicates":
+      await cmdDuplicates();
+      break;
+    case "archive":
+      await cmdArchive(args.days, args.dryRun);
+      break;
+    case "maintenance":
+      await cmdMaintenance(args.dryRun, args.auto, args.schedule);
+      break;
+    case "export":
+      await cmdExport(args.file, args.output, args.format, args.withTools);
       break;
     case "backups":
       await cmdBackups();
