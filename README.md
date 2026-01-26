@@ -2,73 +2,84 @@
 
 [![npm version](https://img.shields.io/npm/v/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-30%20passing-brightgreen)](https://github.com/asifkibria/claude-code-toolkit)
+[![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)](https://github.com/asifkibria/claude-code-toolkit)
 
 A comprehensive MCP server and CLI toolkit for maintaining, optimizing, and troubleshooting your Claude Code installation.
 
-## Why This Toolkit?
+## The Problem This Solves
 
-Claude Code stores conversation history, tool results, and context in local files. Over time, these can:
+When you upload an oversized image, PDF, or document to Claude Code, it gets base64-encoded into your conversation history. That corrupted data then gets sent with **every future request**, causing API errors like:
 
-- **Grow large** - Slowing down startup and responses
-- **Contain errors** - Corrupted data blocking API calls
-- **Accumulate clutter** - Old backups and orphaned files
-- **Become opaque** - Hard to understand what's using space
+- `API Error: 400 - image dimensions exceed max allowed size`
+- `PDF too large. Try reading the file a different way...`
+- Various timeout and context errors
 
-This toolkit gives you visibility and control over your Claude Code data.
+**The worst part?** Nothing works anymore. Not your next message. Not `/compact`. Your entire conversation is bricked.
 
-## Features
+The "official" fix is to clear your conversation and lose everything. This toolkit offers a better solution.
 
-### Health Monitoring
-- Quick health checks with actionable recommendations
-- Identify problematic files before they cause issues
-- Track conversation sizes and growth
+## What It Fixes
 
-### Conversation Analytics
-- View detailed statistics (messages, tool uses, images)
-- Find your largest conversations
-- Sort by size, activity, or modification date
+| Content Type | Detection Threshold | Replacement Message |
+|-------------|---------------------|---------------------|
+| Images | >100KB base64 | `[Image removed - exceeded size limit]` |
+| PDFs | >100KB base64 | `[PDF removed - exceeded size limit]` |
+| Documents | >100KB base64 | `[Document removed - exceeded size limit]` |
+| Large Text | >500KB | `[Large text content removed - exceeded size limit]` |
 
-### Troubleshooting Tools
-- **Fix oversized images** - Resolve the infamous "image dimensions exceed max" error ([#2939](https://github.com/anthropics/claude-code/issues/2939))
-- **Scan for issues** - Detect problems before they break your workflow
-- **Restore from backups** - Recover when things go wrong
+The toolkit surgically removes only the problematic content while preserving your entire conversation history, tool results, and context.
 
-### Maintenance Utilities
-- Automatic backup creation before changes
-- Clean up old backup files
-- Free up disk space safely
+## Quick Start
 
-## Installation
-
-### As MCP Server (Recommended)
-
-Add to Claude Code so you can ask Claude to maintain itself:
+### Fix Your Broken Session Right Now
 
 ```bash
-# Using npx (no install needed)
-claude mcp add --scope user toolkit -- npx -y @asifkibria/claude-code-toolkit claude-code-toolkit-server
+# Scan for issues
+npx @asifkibria/claude-code-toolkit scan
 
-# Or install globally first
-npm install -g @asifkibria/claude-code-toolkit
-claude mcp add --scope user toolkit -- claude-code-toolkit-server
+# Fix them (creates backups automatically)
+npx @asifkibria/claude-code-toolkit fix
 ```
 
-### As CLI Tool
+Restart Claude Code. You're back.
+
+### Install Globally (Recommended)
 
 ```bash
-# Using npx
-npx @asifkibria/claude-code-toolkit health
-
-# Or install globally
 npm install -g @asifkibria/claude-code-toolkit
-claude-code-toolkit health
 
-# Short alias
+# Use the short alias
 cct health
+cct scan
+cct fix
 ```
 
-### From Source
+## Installation Options
+
+### Option 1: MCP Server (Let Claude Maintain Itself)
+
+Add to Claude Code so you can literally ask Claude to check and fix its own issues:
+
+```bash
+claude mcp add --scope user toolkit -- npx -y @asifkibria/claude-code-toolkit claude-code-toolkit-server
+```
+
+Then just ask Claude:
+- "Check your health"
+- "Are there any issues with your conversation files?"
+- "Fix any problems you find"
+
+### Option 2: CLI Tool
+
+```bash
+# Global install
+npm install -g @asifkibria/claude-code-toolkit
+
+# Or use npx (no install needed)
+npx @asifkibria/claude-code-toolkit <command>
+```
+
+### Option 3: From Source
 
 ```bash
 git clone https://github.com/asifkibria/claude-code-toolkit.git
@@ -76,183 +87,237 @@ cd claude-code-toolkit
 npm install && npm run build && npm test
 ```
 
-## Usage
+## CLI Commands
 
-### Inside Claude Code (MCP)
+### `cct health` - Quick Health Check
 
-Once installed as an MCP server, just ask Claude:
-
-> "Check my Claude Code health"
-
-> "Show me my conversation statistics"
-
-> "Scan for any issues"
-
-> "Fix the problems you found"
-
-> "Clean up old backups older than 30 days"
-
-### Command Line
+Start here. Shows overall status and recommendations.
 
 ```bash
-# Quick health check - start here!
-cct health
+$ cct health
 
-# View conversation statistics
-cct stats
-cct stats --limit 20 --sort messages
+Health Check: ⚠ Issues Found
 
-# Scan for issues (dry run)
-cct scan
+Conversations: 23
+Total size: 156.2 MB
+Backups: 5
+Oversized content: 3
 
-# Fix all detected issues
-cct fix
+Largest: -Users-me-projects-myapp/abc123.jsonl
+  Size: 45.2 MB
 
-# Fix specific file
-cct fix -f ~/.claude/projects/myproject/conversation.jsonl
-
-# Manage backups
-cct backups
-cct restore /path/to/backup.jsonl.backup.2024-01-01T00-00-00
-cct cleanup --days 30 --dry-run
-cct cleanup --days 30
+Recommendation: Run 'cct fix' to fix 3 issue(s)
 ```
 
-## Tool Reference
+### `cct scan` - Scan for Issues (Dry Run)
 
-### MCP Tools
-
-| Tool                     | Description                                      |
-| ------------------------ | ------------------------------------------------ |
-| `health_check`           | Quick health check with recommendations          |
-| `get_conversation_stats` | Detailed statistics about all conversations      |
-| `scan_image_issues`      | Scan for oversized images and other issues       |
-| `fix_image_issues`       | Fix detected issues (creates backups)            |
-| `list_backups`           | List all backup files with sizes and dates       |
-| `restore_backup`         | Restore a conversation from backup               |
-| `cleanup_backups`        | Delete old backup files to free space            |
-
-### CLI Commands
-
-| Command          | Description                      |
-| ---------------- | -------------------------------- |
-| `health`         | Quick health check               |
-| `stats`          | Show conversation statistics     |
-| `scan`           | Scan for issues (dry run)        |
-| `fix`            | Fix all detected issues          |
-| `backups`        | List backup files                |
-| `restore <path>` | Restore from backup              |
-| `cleanup`        | Delete old backups               |
-
-### CLI Options
-
-| Option              | Description                                    |
-| ------------------- | ---------------------------------------------- |
-| `-f, --file <path>` | Target specific file                           |
-| `-d, --dry-run`     | Preview without making changes                 |
-| `--no-backup`       | Skip creating backups (not recommended)        |
-| `--days <n>`        | For cleanup: delete backups older than n days  |
-| `--limit <n>`       | For stats: limit number of results             |
-| `--sort <field>`    | For stats: size, messages, images, or modified |
-| `-h, --help`        | Show help                                      |
-| `-v, --version`     | Show version                                   |
-
-## Common Issues This Solves
-
-### "Image dimensions exceed max allowed size"
-
-This error poisons your conversation context, making all subsequent requests fail - even `/compact`. The toolkit detects and fixes these oversized images automatically.
+Shows exactly what's wrong without making changes.
 
 ```bash
-cct scan   # See what's wrong
-cct fix    # Fix it
+$ cct scan
+
+Scanning 23 file(s)...
+
+-Users-me-projects-myapp/conversation1.jsonl
+  Line 142: 🖼️  image (~2.3 MB)
+  Line 856: 📄 pdf (~1.1 MB)
+
+-Users-me-projects-another/conversation2.jsonl
+  Line 45: 📎 document (~890 KB)
+
+Found 3 issue(s) in 2 file(s).
+Run 'cct fix' to fix them.
 ```
 
-### "My Claude Code is slow to start"
+### `cct fix` - Fix All Issues
 
-Large conversation files slow everything down. Use stats to find the culprits:
+Removes problematic content and creates backups.
 
 ```bash
-cct stats --sort size --limit 5
+$ cct fix
+
+Processing 23 file(s)...
+
+✓ -Users-me-projects-myapp/conversation1.jsonl
+  Fixed 2 issue(s)
+  Backup: conversation1.jsonl.backup.2024-01-15T10-30-00
+
+✓ -Users-me-projects-another/conversation2.jsonl
+  Fixed 1 issue(s)
+  Backup: conversation2.jsonl.backup.2024-01-15T10-30-01
+
+✓ Fixed 3 issue(s) in 2 file(s).
+Restart Claude Code to apply changes.
 ```
 
-### "I accidentally broke something"
+### `cct stats` - Conversation Statistics
 
-Backups are created automatically before any fix. Restore anytime:
+See what's using space and resources.
+
+```bash
+$ cct stats --limit 5 --sort size
+
+Conversation Statistics
+
+Total: 23 conversations, 156.2 MB
+Messages: 12,456, Images: 89, Documents: 23
+Problematic content: 3
+
+Top 5 by size:
+
+-Users-me-projects-myapp/abc123.jsonl
+  Size: 45.2 MB, Messages: 2,341
+  Images: 34, Documents: 12 (2 oversized)
+  Modified: 2024-01-15 10:30:00
+...
+```
+
+### `cct backups` - List Backups
+
+See all backup files.
+
+```bash
+$ cct backups
+
+Backup Files (5 files, 89.3 MB total)
+
+conversation1.jsonl.backup.2024-01-15T10-30-00
+  Size: 23.4 MB, Created: 2024-01-15 10:30:00
+...
+```
+
+### `cct restore <path>` - Restore from Backup
+
+Undo a fix if needed.
+
+```bash
+$ cct restore ~/.claude/projects/-Users-me-myapp/conversation.jsonl.backup.2024-01-15T10-30-00
+
+✓ Restored /Users/me/.claude/projects/-Users-me-myapp/conversation.jsonl
+Restart Claude Code to apply changes.
+```
+
+### `cct cleanup` - Delete Old Backups
+
+Free up disk space.
+
+```bash
+# Preview what would be deleted
+$ cct cleanup --days 7 --dry-run
+
+Would delete 3 backup(s):
+  conversation1.jsonl.backup.2024-01-01T00-00-00
+  conversation2.jsonl.backup.2024-01-02T00-00-00
+  conversation3.jsonl.backup.2024-01-03T00-00-00
+
+Run without --dry-run to delete.
+
+# Actually delete them
+$ cct cleanup --days 7
+
+✓ Deleted 3 backup(s)
+```
+
+## CLI Options Reference
+
+| Option | Description |
+|--------|-------------|
+| `-f, --file <path>` | Target a specific file instead of all conversations |
+| `-d, --dry-run` | Preview changes without making them |
+| `--no-backup` | Skip creating backups when fixing (not recommended) |
+| `--days <n>` | For cleanup: delete backups older than n days (default: 7) |
+| `--limit <n>` | For stats: limit number of results (default: 10) |
+| `--sort <field>` | For stats: sort by `size`, `messages`, `images`, or `modified` |
+| `-h, --help` | Show help message |
+| `-v, --version` | Show version |
+
+## MCP Server Tools
+
+When installed as an MCP server, these tools are available to Claude:
+
+| Tool | Description |
+|------|-------------|
+| `health_check` | Quick health check with recommendations |
+| `get_conversation_stats` | Detailed statistics about conversations |
+| `scan_image_issues` | Scan for oversized content (images, PDFs, documents) |
+| `fix_image_issues` | Fix detected issues with automatic backups |
+| `list_backups` | List all backup files |
+| `restore_backup` | Restore a conversation from backup |
+| `cleanup_backups` | Delete old backups to free space |
+
+## How It Works
+
+1. **Locates** your Claude Code data in `~/.claude/projects/`
+2. **Scans** conversation files (`.jsonl`) line by line
+3. **Detects** oversized content:
+   - Images with base64 data >100KB
+   - PDFs with base64 data >100KB
+   - Documents with base64 data >100KB
+   - Text content >500KB
+4. **Reports** findings with file paths, line numbers, and sizes
+5. **Fixes** by replacing problematic content with placeholder text
+6. **Backs up** original files before any modification
+
+## Common Scenarios
+
+### My Claude Code session is completely broken
+
+```bash
+cct scan    # See what's wrong
+cct fix     # Fix it
+# Restart Claude Code
+```
+
+### I want to prevent issues before they happen
+
+```bash
+cct health  # Quick check
+```
+
+### I accidentally uploaded a huge file
+
+```bash
+cct fix -f ~/.claude/projects/path/to/conversation.jsonl
+```
+
+### I want to undo a fix
 
 ```bash
 cct backups                    # Find your backup
 cct restore /path/to/backup    # Restore it
 ```
 
-### "My disk is filling up"
-
-Clean up old backups:
+### My disk is filling up
 
 ```bash
-cct cleanup --days 7 --dry-run  # Preview
-cct cleanup --days 7            # Delete
+cct cleanup --days 30 --dry-run  # Preview
+cct cleanup --days 30            # Delete
 ```
-
-## How It Works
-
-1. **Scans** `~/.claude/projects/` for conversation files (`.jsonl`)
-2. **Analyzes** each message for issues (oversized images, malformed data)
-3. **Reports** findings with actionable recommendations
-4. **Fixes** issues by replacing problematic content with placeholders
-5. **Backs up** original files before any modifications
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Run tests (30 tests)
-npm test
-
-# Watch mode for development
-npm run dev
-
-# Test coverage
-npm run test:coverage
+npm install        # Install dependencies
+npm run build      # Build TypeScript
+npm test           # Run tests (38 tests)
+npm run dev        # Watch mode
+npm run test:coverage  # Coverage report
 ```
 
 ## Contributing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on:
-
-- How to report issues
-- How to suggest features
-- How to submit pull requests
-- Code style and testing requirements
-
-## Roadmap
-
-Future features under consideration:
-
-- [ ] Conversation export (markdown, JSON)
-- [ ] Context size estimation
-- [ ] Duplicate detection
-- [ ] Conversation archiving
-- [ ] Usage analytics dashboard
-- [ ] Automatic scheduled maintenance
-
-Have an idea? [Open an issue](https://github.com/asifkibria/claude-code-toolkit/issues)!
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 MIT - see [LICENSE](LICENSE)
 
-## Related Resources
+## Links
 
-- [Claude Code Documentation](https://docs.anthropic.com/claude-code)
-- [Model Context Protocol](https://modelcontextprotocol.io/)
-- [Claude Code GitHub Issues](https://github.com/anthropics/claude-code/issues)
+- [npm package](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
+- [GitHub repository](https://github.com/asifkibria/claude-code-toolkit)
+- [Original issue #2939](https://github.com/anthropics/claude-code/issues/2939)
 
 ---
 
-**Made with care for the Claude Code community**
+**Made for the Claude Code community**

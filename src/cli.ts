@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI for Claude Code Image Fixer
+ * CLI for Claude Code Toolkit
  * Can be used standalone without MCP integration
  */
 
@@ -15,7 +15,18 @@ import {
   getConversationStats,
   restoreFromBackup,
   deleteOldBackups,
+  type IssueType,
 } from "./lib/scanner.js";
+
+function formatContentType(type: IssueType): string {
+  switch (type) {
+    case "image": return "🖼️  image";
+    case "pdf": return "📄 pdf";
+    case "document": return "📎 document";
+    case "large_text": return "📝 large text";
+    default: return "❓ unknown";
+  }
+}
 
 const CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
@@ -32,8 +43,9 @@ function formatDate(date: Date): string {
 
 function printHelp() {
   console.log(`
-Claude Code Toolkit v1.0.0
+Claude Code Toolkit v1.0.2
 Maintain, optimize, and troubleshoot your Claude Code installation.
+Fixes oversized images, PDFs, documents, and large text content.
 
 USAGE:
   cct <command> [options]
@@ -99,7 +111,7 @@ function parseArgs(args: string[]): {
     }
 
     if (arg === "-v" || arg === "--version") {
-      console.log("1.0.0");
+      console.log("1.0.2");
       process.exit(0);
     }
 
@@ -167,7 +179,7 @@ async function cmdScan(file?: string) {
         const relPath = path.relative(PROJECTS_DIR, f);
         console.log(`\x1b[33m${relPath}\x1b[0m`);
         for (const issue of result.issues) {
-          console.log(`  Line ${issue.line}: ${issue.type} (~${formatBytes(issue.estimatedSize)})`);
+          console.log(`  Line ${issue.line}: ${formatContentType(issue.contentType)} (~${formatBytes(issue.estimatedSize)})`);
         }
       }
     } catch {
@@ -177,10 +189,10 @@ async function cmdScan(file?: string) {
 
   console.log();
   if (totalIssues === 0) {
-    console.log("\x1b[32m✓ No oversized images found.\x1b[0m");
+    console.log("\x1b[32m✓ No oversized content found.\x1b[0m");
   } else {
     console.log(`\x1b[33mFound ${totalIssues} issue(s) in ${filesWithIssues} file(s).\x1b[0m`);
-    console.log("Run 'mcp-claude-image-fixer fix' to fix them.");
+    console.log("Run 'cct fix' to fix them.");
   }
 }
 
@@ -254,11 +266,13 @@ async function cmdStats(limit: number, sort: string) {
   const totalSize = allStats.reduce((sum, s) => sum + s.fileSizeBytes, 0);
   const totalMessages = allStats.reduce((sum, s) => sum + s.totalMessages, 0);
   const totalImages = allStats.reduce((sum, s) => sum + s.imageCount, 0);
-  const totalProblematic = allStats.reduce((sum, s) => sum + s.problematicImages, 0);
+  const totalDocs = allStats.reduce((sum, s) => sum + s.documentCount, 0);
+  const totalProblematic = allStats.reduce((sum, s) => sum + s.problematicContent, 0);
 
   console.log("Conversation Statistics\n");
   console.log(`Total: ${allStats.length} conversations, ${formatBytes(totalSize)}`);
-  console.log(`Messages: ${totalMessages.toLocaleString()}, Images: ${totalImages}, Problematic: ${totalProblematic}\n`);
+  console.log(`Messages: ${totalMessages.toLocaleString()}, Images: ${totalImages}, Documents: ${totalDocs}`);
+  console.log(`Problematic content: ${totalProblematic}\n`);
 
   console.log(`Top ${Math.min(limit, allStats.length)} by ${sort}:\n`);
 
@@ -267,7 +281,7 @@ async function cmdStats(limit: number, sort: string) {
     const shortPath = relPath.length > 60 ? "..." + relPath.slice(-57) : relPath;
     console.log(`\x1b[36m${shortPath}\x1b[0m`);
     console.log(`  Size: ${formatBytes(stats.fileSizeBytes)}, Messages: ${stats.totalMessages}`);
-    console.log(`  Images: ${stats.imageCount}${stats.problematicImages > 0 ? ` (\x1b[33m${stats.problematicImages} oversized\x1b[0m)` : ""}`);
+    console.log(`  Images: ${stats.imageCount}, Documents: ${stats.documentCount}${stats.problematicContent > 0 ? ` (\x1b[33m${stats.problematicContent} oversized\x1b[0m)` : ""}`);
     console.log(`  Modified: ${formatDate(stats.lastModified)}\n`);
   }
 }
@@ -405,7 +419,7 @@ async function cmdHealth() {
   console.log(`Conversations: ${files.length}`);
   console.log(`Total size: ${formatBytes(totalSize)}`);
   console.log(`Backups: ${backups.length}`);
-  console.log(`Oversized images: ${issueCount}`);
+  console.log(`Oversized content: ${issueCount}`);
 
   if (largestFile.path) {
     console.log(`\nLargest: ${path.relative(PROJECTS_DIR, largestFile.path)}`);
@@ -413,7 +427,7 @@ async function cmdHealth() {
   }
 
   if (issueCount > 0) {
-    console.log(`\n\x1b[33mRecommendation: Run 'mcp-claude-image-fixer fix' to fix ${issueCount} issue(s)\x1b[0m`);
+    console.log(`\n\x1b[33mRecommendation: Run 'cct fix' to fix ${issueCount} issue(s)\x1b[0m`);
   }
 }
 

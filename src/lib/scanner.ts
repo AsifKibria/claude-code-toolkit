@@ -1,18 +1,22 @@
 import * as fs from "fs";
 import * as path from "path";
 
-export const MIN_PROBLEMATIC_BASE64_SIZE = 100000;
+export const MIN_PROBLEMATIC_BASE64_SIZE = 100000; // ~100KB base64 ≈ 75KB file
+export const MIN_PROBLEMATIC_TEXT_SIZE = 500000;   // ~500KB for large text content
 
-export interface ImageIssue {
+export type IssueType = "image" | "document" | "pdf" | "large_text" | "unknown";
+
+export interface ContentIssue {
   line: number;
   indices: (number | [number, number])[];
-  type: "message_content" | "toolUseResult";
+  location: "message_content" | "toolUseResult";
+  contentType: IssueType;
   estimatedSize: number;
 }
 
 export interface ScanResult {
   file: string;
-  issues: ImageIssue[];
+  issues: ContentIssue[];
   totalLines: number;
   scannedAt: Date;
 }
@@ -30,7 +34,8 @@ export interface ConversationStats {
   assistantMessages: number;
   toolUses: number;
   imageCount: number;
-  problematicImages: number;
+  documentCount: number;
+  problematicContent: number;
   fileSizeBytes: number;
   lastModified: Date;
 }
@@ -85,53 +90,111 @@ export function findBackupFiles(dir: string): string[] {
   return backups;
 }
 
-export function checkContentForImages(
+function detectContentType(item: Record<string, unknown>): IssueType {
+  const type = item.type as string | undefined;
+
+  if (type === "image") return "image";
+  if (type === "document") {
+    const source = item.source as Record<string, unknown> | undefined;
+    const mediaType = source?.media_type as string | undefined;
+    if (mediaType?.includes("pdf")) return "pdf";
+    return "document";
+  }
+  if (type === "text") {
+    const text = item.text as string | undefined;
+    if (text && text.length > MIN_PROBLEMATIC_TEXT_SIZE) return "large_text";
+  }
+
+  return "unknown";
+}
+
+function getContentSize(item: Record<string, unknown>): number {
+  const type = item.type as string | undefined;
+
+  if (type === "image" || type === "document") {
+    const source = item.source as Record<string, unknown> | undefined;
+    if (source?.type === "base64") {
+      const data = source.data as string | undefined;
+      return data?.length || 0;
+    }
+  }
+
+  if (type === "text") {
+    const text = item.text as string | undefined;
+    return text?.length || 0;
+  }
+
+  return 0;
+}
+
+function isProblematicContent(item: Record<string, unknown>): boolean {
+  const type = item.type as string | undefined;
+
+  // Check images
+  if (type === "image") {
+    const source = item.source as Record<string, unknown> | undefined;
+    if (source?.type === "base64") {
+      const data = source.data as string | undefined;
+      return (data?.length || 0) > MIN_PROBLEMATIC_BASE64_SIZE;
+    }
+  }
+
+  // Check documents (PDFs, etc.)
+  if (type === "document") {
+    const source = item.source as Record<string, unknown> | undefined;
+    if (source?.type === "base64") {
+      const data = source.data as string | undefined;
+      return (data?.length || 0) > MIN_PROBLEMATIC_BASE64_SIZE;
+    }
+  }
+
+  // Check large text content
+  if (type === "text") {
+    const text = item.text as string | undefined;
+    return (text?.length || 0) > MIN_PROBLEMATIC_TEXT_SIZE;
+  }
+
+  return false;
+}
+
+export function checkContentForIssues(
   content: unknown
-): { hasProblems: boolean; indices: (number | [number, number])[]; totalSize: number } {
+): { hasProblems: boolean; indices: (number | [number, number])[]; totalSize: number; contentType: IssueType } {
   if (!Array.isArray(content)) {
-    return { hasProblems: false, indices: [], totalSize: 0 };
+    return { hasProblems: false, indices: [], totalSize: 0, contentType: "unknown" };
   }
 
   const problematicIndices: (number | [number, number])[] = [];
   let totalSize = 0;
+  let detectedType: IssueType = "unknown";
 
   for (let i = 0; i < content.length; i++) {
     const item = content[i];
     if (typeof item !== "object" || item === null) continue;
 
     const itemObj = item as Record<string, unknown>;
+    const size = getContentSize(itemObj);
+    totalSize += size;
 
-    if (itemObj.type === "image") {
-      const source = itemObj.source as Record<string, unknown> | undefined;
-      if (source?.type === "base64") {
-        const base64Data = source.data as string | undefined;
-        if (base64Data) {
-          const size = base64Data.length;
-          totalSize += size;
-          if (size > MIN_PROBLEMATIC_BASE64_SIZE) {
-            problematicIndices.push(i);
-          }
-        }
-      }
-    } else if (itemObj.type === "tool_result") {
+    if (isProblematicContent(itemObj)) {
+      problematicIndices.push(i);
+      detectedType = detectContentType(itemObj);
+    }
+
+    // Check nested content in tool_result
+    if (itemObj.type === "tool_result") {
       const innerContent = itemObj.content;
       if (Array.isArray(innerContent)) {
         for (let j = 0; j < innerContent.length; j++) {
           const innerItem = innerContent[j];
           if (typeof innerItem === "object" && innerItem !== null) {
             const innerObj = innerItem as Record<string, unknown>;
-            if (innerObj.type === "image") {
-              const source = innerObj.source as Record<string, unknown> | undefined;
-              if (source?.type === "base64") {
-                const base64Data = source.data as string | undefined;
-                if (base64Data) {
-                  const size = base64Data.length;
-                  totalSize += size;
-                  if (size > MIN_PROBLEMATIC_BASE64_SIZE) {
-                    problematicIndices.push([i, j]);
-                  }
-                }
-              }
+            const innerSize = getContentSize(innerObj);
+            totalSize += innerSize;
+
+            if (isProblematicContent(innerObj)) {
+              problematicIndices.push([i, j]);
+              detectedType = detectContentType(innerObj);
             }
           }
         }
@@ -139,14 +202,39 @@ export function checkContentForImages(
     }
   }
 
-  return { hasProblems: problematicIndices.length > 0, indices: problematicIndices, totalSize };
+  return {
+    hasProblems: problematicIndices.length > 0,
+    indices: problematicIndices,
+    totalSize,
+    contentType: detectedType
+  };
 }
 
-export function fixImageInContent(
+// Keep old function name for backwards compatibility
+export const checkContentForImages = checkContentForIssues;
+
+function getReplacementText(contentType: IssueType): string {
+  switch (contentType) {
+    case "image":
+      return "[Image removed - exceeded size limit]";
+    case "pdf":
+      return "[PDF removed - exceeded size limit]";
+    case "document":
+      return "[Document removed - exceeded size limit]";
+    case "large_text":
+      return "[Large text content removed - exceeded size limit]";
+    default:
+      return "[Content removed - exceeded size limit]";
+  }
+}
+
+export function fixContentInMessage(
   content: unknown[],
-  indices: (number | [number, number])[]
+  indices: (number | [number, number])[],
+  contentType: IssueType = "unknown"
 ): unknown[] {
   const result = JSON.parse(JSON.stringify(content));
+  const replacementText = getReplacementText(contentType);
 
   for (const idx of indices) {
     if (Array.isArray(idx)) {
@@ -155,13 +243,13 @@ export function fixImageInContent(
       if (Array.isArray(item.content)) {
         item.content[j] = {
           type: "text",
-          text: "[Image removed - exceeded size limit]",
+          text: replacementText,
         };
       }
     } else {
       result[idx] = {
         type: "text",
-        text: "[Image removed - exceeded size limit]",
+        text: replacementText,
       };
     }
   }
@@ -169,8 +257,11 @@ export function fixImageInContent(
   return result;
 }
 
+// Keep old function name for backwards compatibility
+export const fixImageInContent = fixContentInMessage;
+
 export function scanFile(filePath: string): ScanResult {
-  const issues: ImageIssue[] = [];
+  const issues: ContentIssue[] = [];
 
   let content: string;
   try {
@@ -196,12 +287,13 @@ export function scanFile(filePath: string): ScanResult {
     const messageContent = message?.content;
 
     if (messageContent) {
-      const { hasProblems, indices, totalSize } = checkContentForImages(messageContent);
+      const { hasProblems, indices, totalSize, contentType } = checkContentForIssues(messageContent);
       if (hasProblems) {
         issues.push({
           line: lineNum + 1,
           indices,
-          type: "message_content",
+          location: "message_content",
+          contentType,
           estimatedSize: totalSize,
         });
       }
@@ -210,14 +302,15 @@ export function scanFile(filePath: string): ScanResult {
     if (data.toolUseResult) {
       const toolResult = data.toolUseResult as Record<string, unknown>;
       const resultContent = toolResult.content;
-      const { hasProblems, indices, totalSize } = checkContentForImages(resultContent);
+      const { hasProblems, indices, totalSize, contentType } = checkContentForIssues(resultContent);
       if (hasProblems) {
         const existingIssue = issues.find((i) => i.line === lineNum + 1);
         if (!existingIssue) {
           issues.push({
             line: lineNum + 1,
             indices,
-            type: "toolUseResult",
+            location: "toolUseResult",
+            contentType,
             estimatedSize: totalSize,
           });
         }
@@ -268,19 +361,27 @@ export function fixFile(filePath: string, createBackup = true): FixResult {
     try {
       const data = JSON.parse(line) as Record<string, unknown>;
 
-      if (issue.type === "message_content") {
+      if (issue.location === "message_content") {
         const message = data.message as Record<string, unknown>;
         if (message?.content) {
-          message.content = fixImageInContent(message.content as unknown[], issue.indices);
+          message.content = fixContentInMessage(
+            message.content as unknown[],
+            issue.indices,
+            issue.contentType
+          );
         }
       }
 
-      if (issue.type === "toolUseResult" || data.toolUseResult) {
+      if (issue.location === "toolUseResult" || data.toolUseResult) {
         const toolResult = data.toolUseResult as Record<string, unknown>;
         if (toolResult?.content) {
-          const { indices } = checkContentForImages(toolResult.content);
+          const { indices, contentType } = checkContentForIssues(toolResult.content);
           if (indices.length > 0) {
-            toolResult.content = fixImageInContent(toolResult.content as unknown[], indices);
+            toolResult.content = fixContentInMessage(
+              toolResult.content as unknown[],
+              indices,
+              contentType
+            );
           }
         }
       }
@@ -308,7 +409,8 @@ export function getConversationStats(filePath: string): ConversationStats {
     assistantMessages: 0,
     toolUses: 0,
     imageCount: 0,
-    problematicImages: 0,
+    documentCount: 0,
+    problematicContent: 0,
     fileSizeBytes: 0,
     lastModified: new Date(),
   };
@@ -356,12 +458,14 @@ export function getConversationStats(filePath: string): ConversationStats {
             if (itemObj.type === "tool_use") stats.toolUses++;
             if (itemObj.type === "image") {
               stats.imageCount++;
-              const source = itemObj.source as Record<string, unknown> | undefined;
-              if (source?.type === "base64") {
-                const data = source.data as string | undefined;
-                if (data && data.length > MIN_PROBLEMATIC_BASE64_SIZE) {
-                  stats.problematicImages++;
-                }
+              if (isProblematicContent(itemObj)) {
+                stats.problematicContent++;
+              }
+            }
+            if (itemObj.type === "document") {
+              stats.documentCount++;
+              if (isProblematicContent(itemObj)) {
+                stats.problematicContent++;
               }
             }
           }
@@ -378,12 +482,14 @@ export function getConversationStats(filePath: string): ConversationStats {
             const itemObj = item as Record<string, unknown>;
             if (itemObj.type === "image") {
               stats.imageCount++;
-              const source = itemObj.source as Record<string, unknown> | undefined;
-              if (source?.type === "base64") {
-                const data = source.data as string | undefined;
-                if (data && data.length > MIN_PROBLEMATIC_BASE64_SIZE) {
-                  stats.problematicImages++;
-                }
+              if (isProblematicContent(itemObj)) {
+                stats.problematicContent++;
+              }
+            }
+            if (itemObj.type === "document") {
+              stats.documentCount++;
+              if (isProblematicContent(itemObj)) {
+                stats.problematicContent++;
               }
             }
           }

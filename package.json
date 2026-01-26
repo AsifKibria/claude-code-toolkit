@@ -1,6 +1,6 @@
 {
   "name": "@asifkibria/claude-code-toolkit",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "MCP server and CLI toolkit for maintaining, optimizing, and troubleshooting Claude Code installations",
   "type": "module",
   "main": "dist/index.js",

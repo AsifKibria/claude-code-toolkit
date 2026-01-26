@@ -3,8 +3,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import {
-  checkContentForImages,
-  fixImageInContent,
+  checkContentForIssues,
+  fixContentInMessage,
   scanFile,
   fixFile,
   getConversationStats,
@@ -13,6 +13,7 @@ import {
   restoreFromBackup,
   deleteOldBackups,
   MIN_PROBLEMATIC_BASE64_SIZE,
+  MIN_PROBLEMATIC_TEXT_SIZE,
 } from "../lib/scanner.js";
 
 const TEST_DIR = path.join(os.tmpdir(), "mcp-image-fixer-test");
@@ -42,21 +43,21 @@ describe("Scanner Module", () => {
     }
   });
 
-  describe("checkContentForImages", () => {
+  describe("checkContentForIssues", () => {
     it("should return false for empty content", () => {
-      const result = checkContentForImages([]);
+      const result = checkContentForIssues([]);
       expect(result.hasProblems).toBe(false);
       expect(result.indices).toEqual([]);
     });
 
     it("should return false for non-array content", () => {
-      const result = checkContentForImages("not an array");
+      const result = checkContentForIssues("not an array");
       expect(result.hasProblems).toBe(false);
     });
 
     it("should return false for text-only content", () => {
       const content = [{ type: "text", text: "Hello world" }];
-      const result = checkContentForImages(content);
+      const result = checkContentForIssues(content);
       expect(result.hasProblems).toBe(false);
     });
 
@@ -67,7 +68,7 @@ describe("Scanner Module", () => {
           source: { type: "base64", data: createLargeBase64(1000) },
         },
       ];
-      const result = checkContentForImages(content);
+      const result = checkContentForIssues(content);
       expect(result.hasProblems).toBe(false);
     });
 
@@ -78,7 +79,7 @@ describe("Scanner Module", () => {
           source: { type: "base64", data: createLargeBase64(MIN_PROBLEMATIC_BASE64_SIZE + 1) },
         },
       ];
-      const result = checkContentForImages(content);
+      const result = checkContentForIssues(content);
       expect(result.hasProblems).toBe(true);
       expect(result.indices).toEqual([0]);
     });
@@ -96,7 +97,7 @@ describe("Scanner Module", () => {
           source: { type: "base64", data: createLargeBase64(MIN_PROBLEMATIC_BASE64_SIZE + 1) },
         },
       ];
-      const result = checkContentForImages(content);
+      const result = checkContentForIssues(content);
       expect(result.hasProblems).toBe(true);
       expect(result.indices).toEqual([1, 3]);
     });
@@ -115,7 +116,7 @@ describe("Scanner Module", () => {
           ],
         },
       ];
-      const result = checkContentForImages(content);
+      const result = checkContentForIssues(content);
       expect(result.hasProblems).toBe(true);
       expect(result.indices).toEqual([[0, 1]]);
     });
@@ -127,12 +128,53 @@ describe("Scanner Module", () => {
         { type: "image", source: { type: "base64", data: createLargeBase64(size1) } },
         { type: "image", source: { type: "base64", data: createLargeBase64(size2) } },
       ];
-      const result = checkContentForImages(content);
+      const result = checkContentForIssues(content);
       expect(result.totalSize).toBe(size1 + size2);
+    });
+
+    it("should detect oversized PDFs", () => {
+      const content = [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: createLargeBase64(MIN_PROBLEMATIC_BASE64_SIZE + 1) },
+        },
+      ];
+      const result = checkContentForIssues(content);
+      expect(result.hasProblems).toBe(true);
+      expect(result.contentType).toBe("pdf");
+    });
+
+    it("should detect oversized documents", () => {
+      const content = [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/octet-stream", data: createLargeBase64(MIN_PROBLEMATIC_BASE64_SIZE + 1) },
+        },
+      ];
+      const result = checkContentForIssues(content);
+      expect(result.hasProblems).toBe(true);
+      expect(result.contentType).toBe("document");
+    });
+
+    it("should detect large text content", () => {
+      const content = [
+        { type: "text", text: "A".repeat(MIN_PROBLEMATIC_TEXT_SIZE + 1) },
+      ];
+      const result = checkContentForIssues(content);
+      expect(result.hasProblems).toBe(true);
+      expect(result.contentType).toBe("large_text");
+    });
+
+    it("should not flag small text content", () => {
+      const content = [
+        { type: "text", text: "Normal text" },
+      ];
+      const result = checkContentForIssues(content);
+      expect(result.hasProblems).toBe(false);
     });
   });
 
-  describe("fixImageInContent", () => {
+  describe("fixContentInMessage", () => {
     it("should replace oversized image with text placeholder", () => {
       const content = [
         { type: "text", text: "Before" },
@@ -142,7 +184,7 @@ describe("Scanner Module", () => {
         },
         { type: "text", text: "After" },
       ];
-      const fixed = fixImageInContent(content, [1]);
+      const fixed = fixContentInMessage(content, [1], "image");
       expect(fixed[0]).toEqual({ type: "text", text: "Before" });
       expect(fixed[1]).toEqual({ type: "text", text: "[Image removed - exceeded size limit]" });
       expect(fixed[2]).toEqual({ type: "text", text: "After" });
@@ -162,7 +204,7 @@ describe("Scanner Module", () => {
           ],
         },
       ];
-      const fixed = fixImageInContent(content, [[0, 1]]) as any[];
+      const fixed = fixContentInMessage(content, [[0, 1]], "image") as any[];
       expect(fixed[0].content[0]).toEqual({ type: "text", text: "Result" });
       expect(fixed[0].content[1]).toEqual({
         type: "text",
@@ -178,8 +220,38 @@ describe("Scanner Module", () => {
         },
       ];
       const originalCopy = JSON.parse(JSON.stringify(original));
-      fixImageInContent(original, [0]);
+      fixContentInMessage(original, [0]);
       expect(original).toEqual(originalCopy);
+    });
+
+    it("should replace PDF with appropriate placeholder", () => {
+      const content = [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: createLargeBase64(200000) },
+        },
+      ];
+      const fixed = fixContentInMessage(content, [0], "pdf");
+      expect(fixed[0]).toEqual({ type: "text", text: "[PDF removed - exceeded size limit]" });
+    });
+
+    it("should replace document with appropriate placeholder", () => {
+      const content = [
+        {
+          type: "document",
+          source: { type: "base64", data: createLargeBase64(200000) },
+        },
+      ];
+      const fixed = fixContentInMessage(content, [0], "document");
+      expect(fixed[0]).toEqual({ type: "text", text: "[Document removed - exceeded size limit]" });
+    });
+
+    it("should replace large text with appropriate placeholder", () => {
+      const content = [
+        { type: "text", text: "A".repeat(600000) },
+      ];
+      const fixed = fixContentInMessage(content, [0], "large_text");
+      expect(fixed[0]).toEqual({ type: "text", text: "[Large text content removed - exceeded size limit]" });
     });
   });
 
@@ -214,7 +286,8 @@ describe("Scanner Module", () => {
       const result = scanFile(filePath);
       expect(result.issues).toHaveLength(1);
       expect(result.issues[0].line).toBe(2);
-      expect(result.issues[0].type).toBe("message_content");
+      expect(result.issues[0].location).toBe("message_content");
+      expect(result.issues[0].contentType).toBe("image");
     });
 
     it("should detect issues in toolUseResult", () => {
@@ -234,7 +307,7 @@ describe("Scanner Module", () => {
 
       const result = scanFile(filePath);
       expect(result.issues).toHaveLength(1);
-      expect(result.issues[0].type).toBe("toolUseResult");
+      expect(result.issues[0].location).toBe("toolUseResult");
     });
 
     it("should handle malformed JSON lines gracefully", () => {
@@ -368,7 +441,7 @@ describe("Scanner Module", () => {
       expect(stats.toolUses).toBe(2);
     });
 
-    it("should count images and problematic images", () => {
+    it("should count images and problematic content", () => {
       const filePath = createTestFile("images.jsonl", [
         {
           message: {
@@ -386,7 +459,27 @@ describe("Scanner Module", () => {
 
       const stats = getConversationStats(filePath);
       expect(stats.imageCount).toBe(2);
-      expect(stats.problematicImages).toBe(1);
+      expect(stats.problematicContent).toBe(1);
+    });
+
+    it("should count documents", () => {
+      const filePath = createTestFile("documents.jsonl", [
+        {
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "document",
+                source: { type: "base64", media_type: "application/pdf", data: createLargeBase64(MIN_PROBLEMATIC_BASE64_SIZE + 1) },
+              },
+            ],
+          },
+        },
+      ]);
+
+      const stats = getConversationStats(filePath);
+      expect(stats.documentCount).toBe(1);
+      expect(stats.problematicContent).toBe(1);
     });
   });
 

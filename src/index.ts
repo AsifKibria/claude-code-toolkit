@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * MCP Server: Claude Code Image Fixer
- * Fixes the "image dimensions exceed max allowed size" error that poisons conversation context.
+ * MCP Server: Claude Code Toolkit
+ * Fixes oversized content (images, PDFs, documents) that poison conversation context.
  * See: https://github.com/anthropics/claude-code/issues/2939
  */
 
@@ -40,10 +40,20 @@ function formatDate(date: Date): string {
   return date.toISOString().replace("T", " ").slice(0, 19);
 }
 
+function formatContentType(type: string): string {
+  switch (type) {
+    case "image": return "🖼️ Image";
+    case "pdf": return "📄 PDF";
+    case "document": return "📎 Document";
+    case "large_text": return "📝 Large text";
+    default: return "❓ Unknown";
+  }
+}
+
 const server = new Server(
   {
     name: "claude-code-toolkit",
-    version: "1.0.0",
+    version: "1.0.1",
   },
   {
     capabilities: {
@@ -214,21 +224,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: "text",
-                text: `✅ Scanned ${files.length} file(s). No oversized images found.`,
+                text: `✅ Scanned ${files.length} file(s). No oversized content found.`,
               },
             ],
           };
         }
 
         let output = `🔍 **Scan Results**\n\n`;
-        output += `Found **${totalIssues}** oversized image(s) in **${results.length}** file(s)\n\n`;
+        output += `Found **${totalIssues}** issue(s) in **${results.length}** file(s)\n\n`;
 
         for (const result of results) {
           const relPath = path.relative(PROJECTS_DIR, result.file);
           output += `### ${relPath}\n`;
           for (const issue of result.issues) {
             const sizeStr = formatBytes(issue.estimatedSize);
-            output += `- Line ${issue.line}: ${issue.type} (~${sizeStr})\n`;
+            const typeStr = formatContentType(issue.contentType);
+            output += `- Line ${issue.line}: ${typeStr} (~${sizeStr})\n`;
           }
           output += "\n";
         }
@@ -280,12 +291,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         let output = `🔧 **Fix Results**\n\n`;
-        output += `Fixed **${totalFixed}** oversized image(s) in **${results.length}** file(s)\n\n`;
+        output += `Fixed **${totalFixed}** issue(s) in **${results.length}** file(s)\n\n`;
 
         for (const result of results) {
           const relPath = path.relative(PROJECTS_DIR, result.file);
           output += `### ${relPath}\n`;
-          output += `- Fixed ${result.issues.length} issue(s)\n`;
+          for (const issue of result.issues) {
+            const typeStr = formatContentType(issue.contentType);
+            output += `- ${typeStr} removed\n`;
+          }
           if (result.backupPath) {
             output += `- Backup: \`${path.basename(result.backupPath)}\`\n`;
           }
@@ -346,14 +360,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const totalSize = allStats.reduce((sum, s) => sum + s.fileSizeBytes, 0);
         const totalMessages = allStats.reduce((sum, s) => sum + s.totalMessages, 0);
         const totalImages = allStats.reduce((sum, s) => sum + s.imageCount, 0);
-        const totalProblematic = allStats.reduce((sum, s) => sum + s.problematicImages, 0);
+        const totalDocs = allStats.reduce((sum, s) => sum + s.documentCount, 0);
+        const totalProblematic = allStats.reduce((sum, s) => sum + s.problematicContent, 0);
 
         let output = `📊 **Conversation Statistics**\n\n`;
         output += `**Summary** (${allStats.length} conversations)\n`;
         output += `- Total size: ${formatBytes(totalSize)}\n`;
         output += `- Total messages: ${totalMessages.toLocaleString()}\n`;
-        output += `- Total images: ${totalImages}\n`;
-        output += `- Problematic images: ${totalProblematic}\n\n`;
+        output += `- Images: ${totalImages}, Documents: ${totalDocs}\n`;
+        output += `- Problematic content: ${totalProblematic}\n\n`;
 
         output += `**Top ${displayed.length} by ${sortBy}:**\n\n`;
 
@@ -364,7 +379,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           output += `- Size: ${formatBytes(stats.fileSizeBytes)}\n`;
           output += `- Messages: ${stats.totalMessages} (${stats.userMessages} user, ${stats.assistantMessages} assistant)\n`;
           output += `- Tool uses: ${stats.toolUses}\n`;
-          output += `- Images: ${stats.imageCount}${stats.problematicImages > 0 ? ` (⚠️ ${stats.problematicImages} oversized)` : ""}\n`;
+          output += `- Media: ${stats.imageCount} images, ${stats.documentCount} docs${stats.problematicContent > 0 ? ` (⚠️ ${stats.problematicContent} oversized)` : ""}\n`;
           output += `- Modified: ${formatDate(stats.lastModified)}\n\n`;
         }
 
@@ -525,6 +540,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         let totalSize = 0;
         let largestFile = { path: "", size: 0 };
         const filesWithIssues: string[] = [];
+        const issueTypes: Record<string, number> = {};
 
         for (const file of files) {
           try {
@@ -538,6 +554,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (scanResult.issues.length > 0) {
               issueCount += scanResult.issues.length;
               filesWithIssues.push(file);
+              for (const issue of scanResult.issues) {
+                issueTypes[issue.contentType] = (issueTypes[issue.contentType] || 0) + 1;
+              }
             }
           } catch {
             // Skip
@@ -549,7 +568,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         if (issueCount > 0) {
           status = "⚠️ Issues Found";
-          recommendations.push(`Run \`fix_image_issues\` to fix ${issueCount} oversized image(s)`);
+          const typeBreakdown = Object.entries(issueTypes)
+            .map(([type, count]) => `${count} ${type}`)
+            .join(", ");
+          recommendations.push(`Run \`fix_image_issues\` to fix ${issueCount} issue(s) (${typeBreakdown})`);
         }
 
         if (largestFile.size > 50 * 1024 * 1024) {
@@ -567,7 +589,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         output += `- Conversation files: ${files.length}\n`;
         output += `- Total size: ${formatBytes(totalSize)}\n`;
         output += `- Backup files: ${backups.length}\n`;
-        output += `- Oversized images: ${issueCount}\n`;
+        output += `- Problematic content: ${issueCount}\n`;
         output += `- Files with issues: ${filesWithIssues.length}\n\n`;
 
         if (largestFile.path) {
@@ -602,7 +624,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Claude Code Toolkit MCP Server v1.0.0 running on stdio");
+  console.error("Claude Code Toolkit MCP Server v1.0.1 running on stdio");
 }
 
 main().catch(console.error);
