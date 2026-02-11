@@ -39,6 +39,41 @@ import {
   type ArchiveCandidate,
   type MaintenanceReport,
 } from "./lib/scanner.js";
+import {
+  analyzeClaudeStorage,
+  cleanClaudeDirectory,
+  formatStorageReport,
+} from "./lib/storage.js";
+import {
+  diagnoseMcpServers,
+  formatMcpDiagnosticReport,
+} from "./lib/mcp-validator.js";
+import {
+  listSessions,
+  diagnoseSession,
+  repairSession,
+  extractSessionContent,
+  formatSessionReport,
+  formatSessionDiagnosticReport,
+} from "./lib/session-recovery.js";
+import {
+  scanForSecrets,
+  auditSession,
+  enforceRetention,
+  formatSecretsScanReport,
+  formatAuditReport,
+  formatRetentionReport,
+} from "./lib/security.js";
+import {
+  inventoryTraces,
+  cleanTraces,
+  wipeAllTraces,
+  generateTraceGuardHooks,
+  formatTraceInventory,
+  formatTraceCleanReport,
+  formatTraceGuardConfig,
+} from "./lib/trace.js";
+import { startDashboard } from "./lib/dashboard.js";
 
 const CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
@@ -66,7 +101,7 @@ function formatContentType(type: string): string {
 const server = new Server(
   {
     name: "claude-code-toolkit",
-    version: "1.0.7",
+    version: "1.2.0",
   },
   {
     capabilities: {
@@ -277,6 +312,138 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "Automatically perform maintenance actions. Default: false (dry run)",
             },
+          },
+        },
+      },
+      {
+        name: "clean_claude_directory",
+        description: "Analyze and clean the .claude directory. Removes debug logs, empty todos, old snapshots, and orphaned data to free disk space.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            dry_run: { type: "boolean", description: "Preview without deleting. Default: true" },
+            days: { type: "number", description: "Age threshold in days. Default: 7" },
+            category: { type: "string", description: "Clean specific category: debug, todos, shell-snapshots, file-history, session-env, cache" },
+          },
+        },
+      },
+      {
+        name: "validate_mcp_config",
+        description: "Validate MCP server configurations. Checks JSON syntax, command existence, and optionally tests server connectivity.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            test: { type: "boolean", description: "Test server connectivity (spawns processes with 5s timeout). Default: false" },
+          },
+        },
+      },
+      {
+        name: "list_sessions",
+        description: "List all Claude Code sessions with health status. Shows session ID, project, size, message count, and whether the session is healthy, corrupted, empty, or orphaned.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            project: { type: "string", description: "Filter by project path" },
+          },
+        },
+      },
+      {
+        name: "recover_session",
+        description: "Diagnose, repair, or extract content from a Claude Code session. Use for corrupted or crashed sessions.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            session_id: { type: "string", description: "Session ID (or prefix) to recover" },
+            repair: { type: "boolean", description: "Attempt to repair by removing invalid lines. Default: false" },
+            extract: { type: "boolean", description: "Extract salvageable content (messages, edits, commands). Default: false" },
+          },
+          required: ["session_id"],
+        },
+      },
+      {
+        name: "security_scan",
+        description: "Scan conversation files for leaked secrets (AWS keys, API tokens, passwords, private keys, connection strings, JWTs).",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            file: { type: "string", description: "Scan a specific file. Default: all conversation files" },
+          },
+        },
+      },
+      {
+        name: "audit_session",
+        description: "Generate an audit report for a session showing all files read/written, commands executed, MCP tools used, and URLs fetched.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            session_id: { type: "string", description: "Session ID (or prefix) to audit" },
+          },
+          required: ["session_id"],
+        },
+      },
+      {
+        name: "enforce_retention",
+        description: "Apply data retention policy by deleting sessions older than specified days.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            days: { type: "number", description: "Delete sessions older than this many days. Default: 30" },
+            dry_run: { type: "boolean", description: "Preview without deleting. Default: true" },
+          },
+        },
+      },
+      {
+        name: "inventory_traces",
+        description: "Show complete inventory of all traces Claude Code has stored on disk, categorized by sensitivity level (critical/high/medium/low).",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            project: { type: "string", description: "Filter by project path" },
+          },
+        },
+      },
+      {
+        name: "clean_traces",
+        description: "Selectively clean Claude Code traces by category, age, or project.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            categories: { type: "string", description: "Comma-separated categories to clean" },
+            days: { type: "number", description: "Only clean traces older than this many days" },
+            project: { type: "string", description: "Only clean traces for specific project" },
+            dry_run: { type: "boolean", description: "Preview without deleting. Default: true" },
+          },
+        },
+      },
+      {
+        name: "wipe_traces",
+        description: "Securely wipe ALL Claude Code traces. Overwrites files with zeros before deletion. Requires explicit confirmation.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            confirm: { type: "boolean", description: "Must be true to execute wipe" },
+            keep_settings: { type: "boolean", description: "Preserve settings.json and CLAUDE.md. Default: false" },
+          },
+          required: ["confirm"],
+        },
+      },
+      {
+        name: "generate_trace_guard",
+        description: "Generate hook configurations for ongoing trace prevention. Outputs JSON ready to add to settings.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            mode: { type: "string", description: "Guard mode: paranoid (delete everything), moderate (24h retention), minimal (7-day cleanup). Default: moderate" },
+          },
+        },
+      },
+      {
+        name: "start_dashboard",
+        description: "Start the web dashboard on a local port. Returns the URL to open in a browser.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            port: { type: "number", description: "Port number to listen on. Default: 1405" },
           },
         },
       },
@@ -1078,6 +1245,495 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text", text: output }] };
       }
 
+      case "clean_claude_directory": {
+        const dryRun = typedArgs.dry_run !== false;
+        const days = (typedArgs.days as number) || 7;
+        const category = typedArgs.category as string | undefined;
+
+        const analysis = analyzeClaudeStorage();
+        const result = cleanClaudeDirectory(undefined, {
+          dryRun,
+          days,
+          categories: category ? [category] : undefined,
+        });
+
+        const totalFiles = analysis.categories.reduce((sum, c) => sum + c.fileCount, 0);
+
+        let output = `🧹 **Directory ${dryRun ? "Analysis" : "Cleanup"}**\n\n`;
+        output += `## Storage Analysis\n`;
+        output += `| Category | Size | Files |\n`;
+        output += `|----------|------|-------|\n`;
+        for (const cat of analysis.categories) {
+          output += `| ${cat.name} | ${formatBytes(cat.totalSize)} | ${cat.fileCount} |\n`;
+        }
+        output += `| **Total** | **${formatBytes(analysis.totalSize)}** | **${totalFiles}** |\n\n`;
+
+        if (result.deleted.length > 0) {
+          output += `## ${dryRun ? "Cleanable Items" : "Cleaned Items"}\n`;
+          output += `- Files: ${result.deleted.length}\n`;
+          output += `- Space ${dryRun ? "freeable" : "freed"}: ${formatBytes(result.freed)}\n\n`;
+        } else {
+          output += `✓ Nothing to clean.\n\n`;
+        }
+
+        if (dryRun && result.deleted.length > 0) {
+          output += `ℹ️ Set \`dry_run: false\` to actually clean.\n`;
+        }
+
+        if (result.errors.length > 0) {
+          output += `\n⚠️ Errors:\n`;
+          for (const err of result.errors) {
+            output += `- ${err}\n`;
+          }
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "validate_mcp_config": {
+        const test = typedArgs.test === true;
+
+        const report = await diagnoseMcpServers({ test });
+
+        let output = `🔌 **MCP Config Validation**\n\n`;
+        output += `| Metric | Value |\n`;
+        output += `|--------|-------|\n`;
+        output += `| Config files | ${report.configs.length} |\n`;
+        output += `| Total servers | ${report.totalServers} |\n`;
+        output += `| Healthy | ${report.healthyServers} |\n\n`;
+
+        for (const config of report.configs) {
+          output += `### ${config.configPath}\n`;
+          for (const server of config.servers) {
+            const hasErrors = config.issues.some(i => i.server === server.name && i.severity === "error");
+            output += `- **${server.name}** \`${server.command}\` ${hasErrors ? "✗" : "✓"}\n`;
+          }
+          if (config.issues.length > 0) {
+            output += `\n**Issues:**\n`;
+            for (const issue of config.issues) {
+              const icon = issue.severity === "error" ? "✗" : issue.severity === "warning" ? "⚠️" : "ℹ️";
+              output += `- ${icon} [${issue.server}] ${issue.message}\n`;
+              if (issue.fix) output += `  Fix: ${issue.fix}\n`;
+            }
+          }
+          output += `\n`;
+        }
+
+        if (report.testResults) {
+          output += `## Connectivity Tests\n`;
+          output += `| Server | Status | Time |\n`;
+          output += `|--------|--------|------|\n`;
+          for (const t of report.testResults) {
+            const status = t.reachable ? "✓ reachable" : "✗ unreachable";
+            const time = t.startupTime ? `${t.startupTime}ms` : "-";
+            output += `| ${t.server} | ${status} | ${time} |\n`;
+          }
+          output += `\n`;
+        }
+
+        if (report.duplicateServers.length > 0) {
+          output += `## Duplicates\n`;
+          for (const dup of report.duplicateServers) {
+            output += `- **${dup.name}** found in ${dup.locations.length} configs\n`;
+          }
+          output += `\n`;
+        }
+
+        if (report.recommendations.length > 0) {
+          output += `## Recommendations\n`;
+          for (const rec of report.recommendations) {
+            output += `- ${rec}\n`;
+          }
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "list_sessions": {
+        const project = typedArgs.project as string | undefined;
+
+        const sessions = listSessions(undefined, { project });
+
+        if (sessions.length === 0) {
+          return { content: [{ type: "text", text: "No sessions found." }] };
+        }
+
+        let output = `📋 **Sessions** (${sessions.length})\n\n`;
+        output += `| ID | Status | Messages | Size | Project |\n`;
+        output += `|----|--------|----------|------|--------|\n`;
+
+        for (const s of sessions.slice(0, 50)) {
+          const shortId = s.id.slice(0, 8);
+          const icon = s.status === "healthy" ? "✓" : s.status === "corrupted" ? "✗" : s.status === "empty" ? "○" : "?";
+          const shortProject = s.project ? (s.project.length > 25 ? "..." + s.project.slice(-22) : s.project) : "-";
+          output += `| ${shortId} | ${icon} ${s.status} | ${s.messageCount} | ${formatBytes(s.sizeBytes)} | ${shortProject} |\n`;
+        }
+
+        if (sessions.length > 50) {
+          output += `\n... and ${sessions.length - 50} more sessions\n`;
+        }
+
+        const healthy = sessions.filter(s => s.status === "healthy").length;
+        const corrupted = sessions.filter(s => s.status === "corrupted").length;
+        const orphaned = sessions.filter(s => s.status === "orphaned").length;
+
+        output += `\n**Summary:** ${healthy} healthy, ${corrupted} corrupted, ${orphaned} orphaned\n`;
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "recover_session": {
+        const sessionId = typedArgs.session_id as string;
+        const repair = typedArgs.repair === true;
+        const extract = typedArgs.extract === true;
+
+        const sessions = listSessions();
+        const match = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+        if (!match) {
+          return {
+            content: [{ type: "text", text: `Session not found: ${sessionId}` }],
+            isError: true,
+          };
+        }
+
+        const diagnosis = diagnoseSession(match.filePath);
+        let output = `🔍 **Session Recovery: ${match.id.slice(0, 8)}**\n\n`;
+        output += `- Path: \`${match.filePath}\`\n`;
+        output += `- Status: ${diagnosis.issues.length === 0 ? "✓ Healthy" : "✗ Issues found"}\n`;
+        output += `- Total lines: ${diagnosis.totalLines}\n`;
+        output += `- Valid lines: ${diagnosis.validLines}\n`;
+        output += `- Corrupted lines: ${diagnosis.corruptedLines}\n\n`;
+
+        if (diagnosis.issues.length > 0) {
+          output += `**Issues:**\n`;
+          for (const issue of diagnosis.issues.slice(0, 20)) {
+            output += `- Line ${issue.line}: ${issue.type} - ${issue.message}\n`;
+          }
+          if (diagnosis.issues.length > 20) {
+            output += `- ... and ${diagnosis.issues.length - 20} more\n`;
+          }
+          output += `\n`;
+        }
+
+        if (repair) {
+          const repairResult = repairSession(match.filePath);
+          output += `## Repair\n`;
+          output += `- Lines removed: ${repairResult.linesRemoved}\n`;
+          output += `- Lines fixed: ${repairResult.linesFixed}\n`;
+          if (repairResult.backupPath) {
+            output += `- Backup: \`${repairResult.backupPath}\`\n`;
+          }
+          output += `\n`;
+        }
+
+        if (extract) {
+          const content = extractSessionContent(match.filePath);
+          output += `## Extracted Content\n`;
+          output += `- User messages: ${content.userMessages.length}\n`;
+          output += `- Assistant messages: ${content.assistantMessages.length}\n`;
+          output += `- File edits: ${content.fileEdits.length}\n`;
+          output += `- Commands: ${content.commandsRun.length}\n\n`;
+
+          if (content.userMessages.length > 0) {
+            output += `**User Messages (first 5):**\n`;
+            for (const msg of content.userMessages.slice(0, 5)) {
+              const preview = msg.length > 100 ? msg.slice(0, 100) + "..." : msg;
+              output += `- ${preview}\n`;
+            }
+            output += `\n`;
+          }
+
+          if (content.fileEdits.length > 0) {
+            output += `**Files Modified:**\n`;
+            for (const f of content.fileEdits.slice(0, 10)) {
+              output += `- \`${f.path}\`\n`;
+            }
+            output += `\n`;
+          }
+
+          if (content.commandsRun.length > 0) {
+            output += `**Commands Run:**\n`;
+            for (const cmd of content.commandsRun.slice(0, 10)) {
+              output += `- \`${cmd}\`\n`;
+            }
+            output += `\n`;
+          }
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "security_scan": {
+        const file = typedArgs.file as string | undefined;
+
+        const result = scanForSecrets(undefined, { file });
+
+        if (result.totalFindings === 0) {
+          return {
+            content: [{ type: "text", text: `✓ Scanned ${result.filesScanned} file(s). No secrets found.` }],
+          };
+        }
+
+        let output = `🔐 **Security Scan**\n\n`;
+        output += `| Metric | Value |\n`;
+        output += `|--------|-------|\n`;
+        output += `| Files scanned | ${result.filesScanned} |\n`;
+        output += `| Findings | ${result.totalFindings} |\n\n`;
+
+        output += `## Findings by Type\n`;
+        output += `| Type | Count |\n`;
+        output += `|------|-------|\n`;
+        for (const [type, count] of Object.entries(result.summary)) {
+          output += `| ${type} | ${count} |\n`;
+        }
+        output += `\n`;
+
+        output += `## Details\n`;
+        for (const finding of result.findings.slice(0, 25)) {
+          const icon = finding.severity === "critical" ? "🔴" : finding.severity === "high" ? "🟠" : "🟡";
+          const shortFile = path.basename(finding.file);
+          output += `- ${icon} **${finding.pattern}** [${finding.severity}]\n`;
+          output += `  File: \`${shortFile}\` Line: ${finding.line}\n`;
+          output += `  Preview: \`${finding.maskedPreview}\`\n`;
+        }
+        if (result.findings.length > 25) {
+          output += `\n... and ${result.findings.length - 25} more findings\n`;
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "audit_session": {
+        const sessionId = typedArgs.session_id as string;
+
+        const sessions = listSessions();
+        const match = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+        if (!match) {
+          return {
+            content: [{ type: "text", text: `Session not found: ${sessionId}` }],
+            isError: true,
+          };
+        }
+
+        const audit = auditSession(match.filePath);
+
+        let output = `📝 **Session Audit: ${match.id.slice(0, 8)}**\n\n`;
+        output += `- Total actions: ${audit.actions.length}\n`;
+        if (audit.duration) output += `- Duration: ${audit.duration} minutes\n`;
+        output += `\n`;
+
+        if (audit.filesRead.length > 0) {
+          output += `## Files Read (${audit.filesRead.length})\n`;
+          for (const f of audit.filesRead.slice(0, 20)) {
+            output += `- \`${f}\`\n`;
+          }
+          if (audit.filesRead.length > 20) output += `- ... and ${audit.filesRead.length - 20} more\n`;
+          output += `\n`;
+        }
+
+        if (audit.filesWritten.length > 0) {
+          output += `## Files Written (${audit.filesWritten.length})\n`;
+          for (const f of audit.filesWritten.slice(0, 20)) {
+            output += `- \`${f}\`\n`;
+          }
+          if (audit.filesWritten.length > 20) output += `- ... and ${audit.filesWritten.length - 20} more\n`;
+          output += `\n`;
+        }
+
+        if (audit.commandsRun.length > 0) {
+          output += `## Commands (${audit.commandsRun.length})\n`;
+          for (const cmd of audit.commandsRun.slice(0, 20)) {
+            output += `- \`${cmd}\`\n`;
+          }
+          if (audit.commandsRun.length > 20) output += `- ... and ${audit.commandsRun.length - 20} more\n`;
+          output += `\n`;
+        }
+
+        if (audit.mcpToolsUsed.length > 0) {
+          output += `## MCP Tools (${audit.mcpToolsUsed.length})\n`;
+          for (const tool of audit.mcpToolsUsed) {
+            output += `- \`${tool}\`\n`;
+          }
+          output += `\n`;
+        }
+
+        if (audit.urlsFetched.length > 0) {
+          output += `## URLs Fetched (${audit.urlsFetched.length})\n`;
+          for (const url of audit.urlsFetched.slice(0, 10)) {
+            output += `- ${url}\n`;
+          }
+          output += `\n`;
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "enforce_retention": {
+        const days = (typedArgs.days as number) || 30;
+        const dryRun = typedArgs.dry_run !== false;
+
+        const result = enforceRetention(undefined, { days, dryRun });
+
+        let output = `🗑️ **Retention ${dryRun ? "Preview" : "Enforced"}**\n\n`;
+        output += `| Metric | Value |\n`;
+        output += `|--------|-------|\n`;
+        output += `| Sessions ${dryRun ? "eligible" : "deleted"} | ${result.sessionsDeleted} |\n`;
+        output += `| Space ${dryRun ? "freeable" : "freed"} | ${formatBytes(result.spaceFreed)} |\n`;
+        output += `| Threshold | ${days} days |\n\n`;
+
+        if (result.sessionsDeleted === 0) {
+          output += `✓ No sessions older than ${days} days.\n`;
+        } else if (dryRun) {
+          output += `ℹ️ Set \`dry_run: false\` to actually delete.\n`;
+        } else {
+          output += `✓ ${result.sessionsDeleted} session(s) deleted.\n`;
+        }
+
+        if (result.errors.length > 0) {
+          output += `\n⚠️ Errors:\n`;
+          for (const err of result.errors) {
+            output += `- ${err}\n`;
+          }
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "inventory_traces": {
+        const project = typedArgs.project as string | undefined;
+
+        const inventory = inventoryTraces(undefined, { project });
+
+        let output = `🔎 **Trace Inventory**\n\n`;
+        output += `| Metric | Value |\n`;
+        output += `|--------|-------|\n`;
+        output += `| Total files | ${inventory.totalFiles} |\n`;
+        output += `| Total size | ${formatBytes(inventory.totalSize)} |\n`;
+        output += `| Critical items | ${inventory.criticalItems} |\n`;
+        output += `| High items | ${inventory.highItems} |\n\n`;
+
+        output += `## Categories\n`;
+        output += `| Category | Sensitivity | Files | Size |\n`;
+        output += `|----------|-------------|-------|------|\n`;
+        for (const cat of inventory.categories) {
+          if (cat.fileCount === 0) continue;
+          const icon = cat.sensitivity === "critical" ? "🔴" : cat.sensitivity === "high" ? "🟠" : cat.sensitivity === "medium" ? "🟡" : "🟢";
+          output += `| ${icon} ${cat.name} | ${cat.sensitivity} | ${cat.fileCount} | ${formatBytes(cat.totalSize)} |\n`;
+        }
+        output += `\n`;
+
+        if (inventory.criticalItems > 0) {
+          output += `⚠️ ${inventory.criticalItems} critical trace items found. Consider running \`clean_traces\` or \`wipe_traces\`.\n`;
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "clean_traces": {
+        const categories = typedArgs.categories as string | undefined;
+        const days = typedArgs.days as number | undefined;
+        const project = typedArgs.project as string | undefined;
+        const dryRun = typedArgs.dry_run !== false;
+
+        const result = cleanTraces(undefined, {
+          categories: categories ? categories.split(",").map(c => c.trim()) : undefined,
+          days,
+          project,
+          dryRun,
+        });
+
+        let output = `🧹 **Trace ${dryRun ? "Cleanup Preview" : "Cleanup Complete"}**\n\n`;
+        output += `| Metric | Value |\n`;
+        output += `|--------|-------|\n`;
+        output += `| Files ${dryRun ? "to delete" : "deleted"} | ${result.deleted.length} |\n`;
+        output += `| Space ${dryRun ? "freeable" : "freed"} | ${formatBytes(result.freed)} |\n`;
+        output += `| Categories | ${result.categoriesAffected.join(", ") || "none"} |\n\n`;
+
+        if (result.deleted.length === 0) {
+          output += `✓ Nothing to clean.\n`;
+        } else if (dryRun) {
+          output += `ℹ️ Set \`dry_run: false\` to actually delete.\n`;
+        } else {
+          output += `✓ Cleanup complete.\n`;
+        }
+
+        if (result.errors.length > 0) {
+          output += `\n⚠️ Errors:\n`;
+          for (const err of result.errors) {
+            output += `- ${err}\n`;
+          }
+        }
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "wipe_traces": {
+        const confirm = typedArgs.confirm === true;
+        const keepSettings = typedArgs.keep_settings === true;
+
+        if (!confirm) {
+          return {
+            content: [{ type: "text", text: "⚠️ **Wipe requires explicit confirmation.** Set `confirm: true` to securely wipe all Claude Code traces. This action is irreversible." }],
+          };
+        }
+
+        const result = wipeAllTraces(undefined, {
+          confirm: true,
+          keepSettings,
+        });
+
+        let output = `💀 **Trace Wipe Complete**\n\n`;
+        output += `| Metric | Value |\n`;
+        output += `|--------|-------|\n`;
+        output += `| Files wiped | ${result.filesWiped} |\n`;
+        output += `| Space freed | ${formatBytes(result.bytesFreed)} |\n`;
+        output += `| Categories | ${result.categoriesWiped.join(", ")} |\n\n`;
+
+        if (result.preserved.length > 0) {
+          output += `**Preserved:** ${result.preserved.join(", ")}\n\n`;
+        }
+
+        output += `✓ All traces securely wiped.\n`;
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "generate_trace_guard": {
+        const mode = (typedArgs.mode as "paranoid" | "moderate" | "minimal") || "moderate";
+
+        const config = generateTraceGuardHooks({ mode });
+
+        let output = `🛡️ **Trace Guard Configuration (${mode} mode)**\n\n`;
+        output += `## Hooks\n`;
+        for (const hook of config.hooks) {
+          output += `### ${hook.event}\n`;
+          output += `- ${hook.description}\n`;
+          output += `- Command: \`${hook.command}\`\n`;
+          if (hook.matcher) output += `- Matcher: \`${hook.matcher}\`\n`;
+          output += `\n`;
+        }
+
+        output += `## Installation\n`;
+        output += `Add this to your \`~/.claude/settings.json\`:\n\n`;
+        output += `\`\`\`json\n${config.settingsJson}\n\`\`\`\n\n`;
+        output += config.instructions + `\n`;
+
+        return { content: [{ type: "text", text: output }] };
+      }
+
+      case "start_dashboard": {
+        const port = (typedArgs.port as number) || 1405;
+
+        await startDashboard({ port, open: false });
+
+        const url = `http://localhost:${port}`;
+        return {
+          content: [{ type: "text", text: `Dashboard started at ${url}\n\nOpen this URL in your browser to view the dashboard.` }],
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1092,7 +1748,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Claude Code Toolkit MCP Server v1.0.7 running on stdio");
+  console.error("Claude Code Toolkit MCP Server v1.2.0 running on stdio");
 }
 
 main().catch(console.error);

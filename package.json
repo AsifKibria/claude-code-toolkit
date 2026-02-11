@@ -1,6 +1,6 @@
 {
   "name": "@asifkibria/claude-code-toolkit",
-  "version": "1.0.7",
+  "version": "1.2.0",
   "description": "MCP server and CLI toolkit for maintaining, optimizing, and troubleshooting Claude Code installations",
   "type": "module",
   "main": "dist/index.js",
@@ -10,7 +10,7 @@
     "claude-code-toolkit-server": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/cli.js dist/index.js",
     "start": "node dist/index.js",
     "cli": "node dist/cli.js",
     "dev": "tsc --watch",
@@ -31,7 +31,15 @@
     "optimization",
     "troubleshooting",
     "conversation",
-    "context"
+    "context",
+    "security",
+    "privacy",
+    "mcp-validator",
+    "session-recovery",
+    "trace-management",
+    "storage-cleaner",
+    "dashboard",
+    "web-ui"
   ],
   "author": "Asif Kibria",
   "license": "MIT",

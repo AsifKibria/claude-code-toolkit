@@ -1,0 +1,2383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Toolkit — Maintain, Optimize, Secure</title>
+<meta name="description" content="A comprehensive MCP server and CLI toolkit for maintaining, optimizing, securing, and troubleshooting your Claude Code installation.">
+<style>
+@font-face {
+  font-family: 'Departure';
+  src: local('SF Mono'), local('Fira Code'), local('JetBrains Mono'), local('Cascadia Code'), local('Consolas'), local('monospace');
+}
+
+:root {
+  --bg-deep: #060a10;
+  --bg: #0a0f18;
+  --bg2: #0f1520;
+  --bg3: #151d2c;
+  --bg4: #1c2738;
+  --surface: #1a2332;
+  --border: #1e2d42;
+  --border-glow: #2a3f5f;
+  --text: #d4dde8;
+  --text2: #8b9bb5;
+  --text3: #566882;
+  --accent: #60a5fa;
+  --accent2: #3b82f6;
+  --purple: #a78bfa;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --red: #f87171;
+  --orange: #fb923c;
+  --glow-accent: rgba(96, 165, 250, 0.15);
+  --glow-purple: rgba(167, 139, 250, 0.12);
+  --glow-green: rgba(52, 211, 153, 0.1);
+  --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --nav-bg-scrolled: rgba(10, 15, 24, 0.85);
+  --shadow-color: rgba(0, 0, 0, 0.3);
+}
+
+html.light {
+  --bg-deep: #f8fafc;
+  --bg: #ffffff;
+  --bg2: #f1f5f9;
+  --bg3: #e2e8f0;
+  --bg4: #cbd5e1;
+  --surface: #f1f5f9;
+  --border: #e2e8f0;
+  --border-glow: #94a3b8;
+  --text: #0f172a;
+  --text2: #475569;
+  --text3: #64748b;
+  --accent: #2563eb;
+  --accent2: #1d4ed8;
+  --purple: #7c3aed;
+  --green: #059669;
+  --yellow: #d97706;
+  --red: #dc2626;
+  --orange: #ea580c;
+  --glow-accent: rgba(37, 99, 235, 0.1);
+  --glow-purple: rgba(124, 58, 237, 0.08);
+  --glow-green: rgba(5, 150, 105, 0.08);
+  --nav-bg-scrolled: rgba(255, 255, 255, 0.9);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-glow) var(--bg);
+}
+
+body {
+  font-family: var(--sans);
+  background: var(--bg-deep);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(96, 165, 250, 0.3);
+  color: #fff;
+}
+
+.container {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+
+.section-label::before {
+  content: '';
+  display: block;
+  width: 20px;
+  height: 1px;
+  background: var(--accent);
+}
+
+.section-title {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  line-height: 1.15;
+  margin-bottom: 16px;
+}
+
+.section-desc {
+  font-size: 16px;
+  color: var(--text2);
+  max-width: 600px;
+  line-height: 1.7;
+}
+
+section {
+  padding: 100px 0;
+  position: relative;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* NAV */
+nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 0 24px;
+  transition: background 0.3s, box-shadow 0.3s, backdrop-filter 0.3s;
+}
+
+nav.scrolled {
+  background: var(--nav-bg-scrolled);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 1px 0 var(--border), 0 8px 30px var(--shadow-color);
+}
+
+/* Theme Toggle */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-right: 12px;
+}
+
+.theme-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--glow-accent);
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.theme-toggle .sun { display: none; }
+.theme-toggle .moon { display: block; }
+html.light .theme-toggle .sun { display: block; }
+html.light .theme-toggle .moon { display: none; }
+
+.nav-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.nav-logo {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(96, 165, 250, 0.3);
+}
+
+.nav-brand span {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.3px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 4px;
+  list-style: none;
+}
+
+.nav-links a {
+  display: block;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text2);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  transition: color 0.2s, background 0.2s;
+}
+
+.nav-links a:hover {
+  color: var(--text);
+  background: var(--glow-accent);
+}
+
+.nav-links a.active {
+  color: var(--accent);
+}
+
+.nav-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent2);
+  border: none;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: background 0.2s, transform 0.15s;
+  cursor: pointer;
+}
+
+.nav-cta:hover {
+  background: var(--accent);
+  transform: translateY(-1px);
+}
+
+.nav-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px;
+}
+
+@media (max-width: 768px) {
+  .nav-links { display: none; }
+  .nav-toggle { display: block; }
+  .nav-links.open {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 64px;
+    left: 0;
+    right: 0;
+    background: rgba(10, 15, 24, 0.95);
+    backdrop-filter: blur(20px);
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* HERO */
+#hero {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 120px 24px 80px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.hero-bg::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: -20%;
+  width: 140%;
+  height: 140%;
+  background:
+    radial-gradient(ellipse 600px 400px at 30% 30%, rgba(96, 165, 250, 0.08) 0%, transparent 70%),
+    radial-gradient(ellipse 500px 350px at 70% 50%, rgba(167, 139, 250, 0.06) 0%, transparent 70%),
+    radial-gradient(ellipse 400px 300px at 50% 80%, rgba(52, 211, 153, 0.04) 0%, transparent 70%);
+  animation: heroShift 20s ease-in-out infinite alternate;
+}
+
+@keyframes heroShift {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-30px, -20px) scale(1.05); }
+}
+
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(96, 165, 250, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(96, 165, 250, 0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 30%, transparent 100%);
+}
+
+.hero-scan {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: scanLine 8s linear infinite;
+  opacity: 0.4;
+}
+
+@keyframes scanLine {
+  0% { top: 0; left: -100%; }
+  50% { left: 100%; }
+  50.01% { top: 100%; left: 100%; }
+  100% { left: -100%; }
+}
+
+.hero-content {
+  position: relative;
+  z-index: 2;
+  max-width: 680px;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--green);
+  margin-bottom: 32px;
+  animation: fadeUp 0.8s 0.2s both;
+}
+
+.hero-badge .dot {
+  width: 6px;
+  height: 6px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+.hero-title {
+  font-size: clamp(36px, 6vw, 64px);
+  font-weight: 900;
+  letter-spacing: -2px;
+  line-height: 1.05;
+  margin-bottom: 20px;
+  animation: fadeUp 0.8s 0.3s both;
+}
+
+.hero-title .gradient {
+  background: linear-gradient(135deg, var(--accent), var(--purple) 50%, var(--green));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-desc {
+  font-size: 17px;
+  color: var(--text2);
+  line-height: 1.7;
+  max-width: 520px;
+  margin: 0 auto 40px;
+  animation: fadeUp 0.8s 0.4s both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hero-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px 12px 20px;
+  animation: fadeUp 0.8s 0.5s both;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.hero-install:hover {
+  border-color: var(--border-glow);
+  box-shadow: 0 0 20px var(--glow-accent);
+}
+
+.hero-install code {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+  user-select: all;
+}
+
+.hero-install .prefix {
+  color: var(--green);
+  user-select: none;
+}
+
+.hero-install .copy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text3);
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.hero-install .copy-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--glow-accent);
+}
+
+.hero-install .copy-btn.copied {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.hero-stats {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  margin-top: 48px;
+  animation: fadeUp 0.8s 0.6s both;
+}
+
+.hero-stat {
+  text-align: center;
+}
+
+.hero-stat .num {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+
+.hero-stat .lbl {
+  font-size: 12px;
+  color: var(--text3);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+/* FEATURES */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 48px;
+}
+
+.feature-card {
+  position: relative;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+  overflow: hidden;
+}
+
+.feature-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.feature-card:hover {
+  border-color: var(--border-glow);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.feature-card:hover::before {
+  opacity: 1;
+}
+
+.fc-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  margin-bottom: 16px;
+}
+
+.fc-icon.blue { background: var(--glow-accent); }
+.fc-icon.purple { background: var(--glow-purple); }
+.fc-icon.green { background: var(--glow-green); }
+.fc-icon.yellow { background: rgba(251, 191, 36, 0.1); }
+.fc-icon.red { background: rgba(248, 113, 113, 0.1); }
+.fc-icon.orange { background: rgba(251, 146, 60, 0.1); }
+
+.feature-card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  letter-spacing: -0.2px;
+}
+
+.feature-card p {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+/* USE CASES */
+.usecases-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 48px;
+}
+
+.usecase-card {
+  position: relative;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  display: flex;
+  gap: 16px;
+  transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+}
+
+.usecase-card:hover {
+  border-color: var(--border-glow);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+}
+
+.usecase-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+  background: var(--bg3);
+}
+
+.usecase-icon.critical { background: rgba(248, 113, 113, 0.15); }
+.usecase-icon.high { background: rgba(251, 191, 36, 0.15); }
+.usecase-icon.medium { background: var(--glow-accent); }
+.usecase-icon.low { background: var(--glow-green); }
+
+.usecase-content h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.usecase-content p {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .usecases-grid { grid-template-columns: 1fr; }
+}
+
+/* QUICK START */
+.install-methods {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+  margin-top: 48px;
+}
+
+.install-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.install-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+
+.install-header span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text2);
+}
+
+.install-step {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+  background: var(--bg4);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.install-body {
+  padding: 20px;
+}
+
+.code-block {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-x: auto;
+  margin-bottom: 12px;
+  white-space: pre;
+}
+
+.code-block:last-child { margin-bottom: 0; }
+
+.code-block .comment { color: var(--text3); }
+.code-block .cmd { color: var(--green); }
+.code-block .flag { color: var(--yellow); }
+
+.code-block .copy-float {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.code-block:hover .copy-float { opacity: 1; }
+.code-block .copy-float:hover { color: var(--accent); border-color: var(--accent); }
+.code-block .copy-float.copied { color: var(--green); border-color: var(--green); }
+
+.install-note {
+  font-size: 13px;
+  color: var(--text3);
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+/* CLI COMMANDS */
+.commands-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 48px;
+}
+
+.cmd-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.cmd-card:hover {
+  border-color: var(--border-glow);
+  background: var(--bg3);
+}
+
+.cmd-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.cmd-desc {
+  font-size: 12px;
+  color: var(--text3);
+  line-height: 1.4;
+}
+
+/* DASHBOARD */
+.dash-showcase {
+  margin-top: 48px;
+}
+
+.dash-window {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.dash-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+
+.dash-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dash-dot.r { background: var(--red); }
+.dash-dot.y { background: var(--yellow); }
+.dash-dot.g { background: var(--green); }
+
+.dash-titlebar span {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text3);
+  font-family: var(--mono);
+}
+
+.dash-body {
+  display: flex;
+  min-height: 360px;
+}
+
+.dash-sidebar {
+  width: 180px;
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  flex-shrink: 0;
+}
+
+.dash-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text3);
+  cursor: default;
+  transition: all 0.2s;
+  border-left: 2px solid transparent;
+}
+
+.dash-tab:hover { color: var(--text2); background: var(--glow-accent); }
+.dash-tab.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--glow-accent);
+}
+
+.dash-tab .badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--red);
+  color: #fff;
+}
+
+.dash-content {
+  flex: 1;
+  padding: 24px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  align-content: start;
+}
+
+.dash-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  text-align: center;
+}
+
+.dash-card .dc-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text3);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.dash-card .dc-val {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.dash-ring {
+  grid-row: span 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.dash-ring svg {
+  width: 80px;
+  height: 80px;
+  transform: rotate(-90deg);
+}
+
+.dash-ring circle { fill: none; stroke-width: 7; stroke-linecap: round; }
+.dash-ring .ring-bg { stroke: var(--bg4); }
+.dash-ring .ring-fg { stroke: var(--green); stroke-dasharray: 226; stroke-dashoffset: 34; }
+
+.dash-ring .ring-label {
+  font-size: 10px;
+  color: var(--text3);
+  margin-top: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dash-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 32px;
+}
+
+.dash-feat {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.dash-feat .df-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dash-feat h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.dash-feat p {
+  font-size: 12px;
+  color: var(--text3);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .dash-sidebar { display: none; }
+  .dash-content { grid-template-columns: repeat(2, 1fr); padding: 16px; }
+}
+
+/* MCP TABLE */
+.mcp-table-wrap {
+  margin-top: 48px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mcp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mcp-table th {
+  text-align: left;
+  padding: 12px 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text3);
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-table td {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-table tr:last-child td { border-bottom: none; }
+
+.mcp-table tr:hover td {
+  background: var(--glow-accent);
+}
+
+.mcp-table .tool-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.mcp-table .tool-desc {
+  color: var(--text2);
+}
+
+.mcp-table .tool-cat {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.cat-core { background: var(--glow-accent); color: var(--accent); }
+.cat-storage { background: var(--glow-green); color: var(--green); }
+.cat-session { background: var(--glow-purple); color: var(--purple); }
+.cat-security { background: rgba(248, 113, 113, 0.1); color: var(--red); }
+.cat-trace { background: rgba(251, 191, 36, 0.1); color: var(--yellow); }
+
+@media (max-width: 640px) {
+  .mcp-table { font-size: 12px; }
+  .mcp-table th, .mcp-table td { padding: 8px 12px; }
+  .mcp-table .tool-cat-col { display: none; }
+}
+
+/* FOOTER */
+footer {
+  padding: 48px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.footer-brand .f-logo {
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+  color: #fff;
+}
+
+.footer-brand span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text2);
+}
+
+.footer-links {
+  display: flex;
+  gap: 24px;
+}
+
+.footer-links a {
+  font-size: 13px;
+  color: var(--text3);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover { color: var(--accent); }
+
+.footer-copy {
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text3);
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+/* Screenshot Gallery */
+.screenshots-section {
+  padding: 80px 0;
+  background: var(--bg2);
+}
+
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 24px;
+  margin-top: 48px;
+}
+
+.screenshot-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: transform 0.3s, box-shadow 0.3s, border-color 0.3s;
+}
+
+.screenshot-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 48px var(--shadow-color);
+  border-color: var(--border-glow);
+}
+
+.screenshot-img {
+  width: 100%;
+  height: 220px;
+  background: var(--bg3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.screenshot-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.screenshot-img img.hidden {
+  display: none;
+}
+
+.screenshot-img img.hidden + .placeholder {
+  display: flex;
+}
+
+.screenshot-img .placeholder {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.screenshot-img img.hidden + .placeholder {
+  display: flex;
+}
+
+.screenshot-img .placeholder svg {
+  width: 40px;
+  height: 40px;
+  opacity: 0.5;
+}
+
+.screenshot-info {
+  padding: 16px 20px;
+}
+
+.screenshot-info h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.screenshot-info p {
+  font-size: 13px;
+  color: var(--text3);
+}
+
+.glow-line {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-glow) 20%, var(--accent) 50%, var(--border-glow) 80%, transparent);
+  opacity: 0.5;
+}
+
+html.light .glow-line {
+  opacity: 0.3;
+}
+
+/* Lightbox */
+.lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.9);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+}
+
+.lightbox.open {
+  display: flex;
+  animation: fadeIn 0.2s;
+}
+
+.lightbox-content {
+  position: relative;
+  max-width: 95vw;
+  max-height: 90vh;
+  cursor: default;
+}
+
+.lightbox-content img {
+  max-width: 100%;
+  max-height: 85vh;
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  width: 36px;
+  height: 36px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.lightbox-close:hover {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.lightbox-caption {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--text2);
+}
+
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.lightbox-nav:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.lightbox-nav.prev { left: -60px; }
+.lightbox-nav.next { right: -60px; }
+
+@media (max-width: 900px) {
+  .lightbox-nav.prev { left: 10px; }
+  .lightbox-nav.next { right: 10px; }
+}
+
+.screenshot-card {
+  cursor: pointer;
+}
+
+/* Hero Steps Modal */
+.steps-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.8);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.steps-modal.open {
+  display: flex;
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.steps-content {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 620px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+.steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+
+.steps-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.steps-close {
+  width: 32px;
+  height: 32px;
+  background: var(--bg4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text2);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.steps-close:hover {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.steps-body {
+  padding: 24px;
+}
+
+.step-item {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.step-item:last-child {
+  margin-bottom: 0;
+}
+
+.step-num {
+  width: 28px;
+  height: 28px;
+  background: var(--glow-accent);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.step-content h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.step-content p {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.5;
+}
+
+.step-content code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--green);
+}
+
+.step-content .step-cmd {
+  margin-top: 8px;
+}
+
+.step-content .step-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text3);
+}
+
+.step-content .step-note code {
+  color: var(--accent);
+}
+
+.steps-intro {
+  margin-bottom: 8px;
+}
+
+.steps-intro h4 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+.use-cases {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.use-cases li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.5;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.use-cases li strong {
+  color: var(--text);
+}
+
+.uc-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.steps-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 20px 0;
+}
+
+.steps-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
+  animation: fadeUp 0.8s 0.55s both;
+}
+
+.hero-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.hero-btn-primary {
+  background: var(--accent2);
+  color: #fff;
+}
+
+.hero-btn-primary:hover {
+  background: var(--accent);
+  transform: translateY(-1px);
+}
+
+.hero-btn-secondary {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.hero-btn-secondary:hover {
+  border-color: var(--border-glow);
+  background: var(--bg4);
+}
+
+@media (max-width: 768px) {
+  section { padding: 60px 0; }
+  .hero-stats { gap: 24px; }
+  .hero-stat .num { font-size: 20px; }
+  .features-grid { grid-template-columns: 1fr; }
+  .install-methods { grid-template-columns: 1fr; }
+  .commands-grid { grid-template-columns: 1fr; }
+  .dash-features { grid-template-columns: 1fr; }
+  .footer-inner { justify-content: center; text-align: center; }
+  .footer-links { justify-content: center; }
+}
+
+@media (max-width: 480px) {
+  .hero-install { flex-direction: column; gap: 8px; }
+  .hero-install code { font-size: 12px; }
+}
+</style>
+</head>
+<body>
+
+<nav id="mainNav">
+  <div class="nav-inner">
+    <a href="#hero" class="nav-brand">
+      <div class="nav-logo">C</div>
+      <span>Claude Code Toolkit</span>
+    </a>
+    <ul class="nav-links" id="navLinks">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#usecases">Use Cases</a></li>
+      <li><a href="#quickstart">Quick Start</a></li>
+      <li><a href="#dashboard">Dashboard</a></li>
+      <li><a href="#screenshots">Screenshots</a></li>
+      <li><a href="#mcp">MCP Tools</a></li>
+    </ul>
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+    <a href="https://github.com/asifkibria/claude-code-toolkit" target="_blank" rel="noopener" class="nav-cta">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <button class="nav-toggle" id="navToggle" aria-label="Menu">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><line x1="3" y1="5" x2="17" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="15" x2="17" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</nav>
+
+<section id="hero">
+  <div class="hero-bg">
+    <div class="hero-grid"></div>
+    <div class="hero-scan"></div>
+  </div>
+  <div class="hero-content">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      v1.2.0 &middot; 280 tests passing
+    </div>
+    <h1 class="hero-title">
+      <span class="gradient">Claude Code</span><br>Toolkit
+    </h1>
+    <p class="hero-desc">
+      A comprehensive MCP server and CLI toolkit for maintaining, optimizing, securing, and troubleshooting your Claude Code installation.
+    </p>
+    <div class="hero-install" id="heroInstall">
+      <code><span class="prefix">$</span> npx @asifkibria/claude-code-toolkit health</code>
+      <button class="copy-btn" id="heroCopyBtn" aria-label="Copy command">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+      </button>
+    </div>
+    <div class="hero-actions">
+      <button class="hero-btn hero-btn-primary" id="viewStepsBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>
+        View Steps
+      </button>
+      <a href="#quickstart" class="hero-btn hero-btn-secondary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14m-7-7l7 7 7-7"/></svg>
+        More Options
+      </a>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="num">24</div><div class="lbl">MCP Tools</div></div>
+      <div class="hero-stat"><div class="num">22</div><div class="lbl">CLI Commands</div></div>
+      <div class="hero-stat"><div class="num">14</div><div class="lbl">Dashboard Tabs</div></div>
+      <div class="hero-stat"><div class="num">280</div><div class="lbl">Tests Passing</div></div>
+    </div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="features">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">Features</div>
+      <h2 class="section-title">Everything you need to<br>keep Claude Code healthy</h2>
+      <p class="section-desc">From fixing broken sessions to enterprise security compliance, the toolkit covers the full lifecycle of your Claude Code installation.</p>
+    </div>
+    <div class="features-grid reveal" id="featuresGrid"></div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="usecases">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">Use Cases</div>
+      <h2 class="section-title">Common problems<br>this toolkit solves</h2>
+      <p class="section-desc">Real issues that users encounter daily. The toolkit provides instant fixes for all of them.</p>
+    </div>
+    <div class="usecases-grid reveal">
+      <div class="usecase-card">
+        <div class="usecase-icon critical">&#128680;</div>
+        <div class="usecase-content">
+          <h3>Out of Memory / API Error</h3>
+          <p>Uploaded a large image or PDF and now Claude won't respond? The conversation file is too big for the API.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon critical">&#128274;</div>
+        <div class="usecase-content">
+          <h3>Leaked Secrets</h3>
+          <p>Accidentally pasted API keys or passwords in chat? Find and redact them before they're exposed.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon high">&#128683;</div>
+        <div class="usecase-content">
+          <h3>Broken Sessions</h3>
+          <p>Claude crashed mid-conversation? Recover and repair corrupted session files.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon medium">&#128190;</div>
+        <div class="usecase-content">
+          <h3>Disk Space</h3>
+          <p>Months of conversation history eating up GBs? Clean old traces and archive inactive sessions.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon high">&#128065;</div>
+        <div class="usecase-content">
+          <h3>Privacy / Trace Cleanup</h3>
+          <p>Corporate security requires clearing Claude traces? Full inventory of 18 trace categories with secure wipe option.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon medium">&#128230;</div>
+        <div class="usecase-content">
+          <h3>Backup &amp; Restore</h3>
+          <p>Need to undo a fix or restore a conversation? Automatic backups before every change, with easy restore.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon low">&#128247;</div>
+        <div class="usecase-content">
+          <h3>Storage Snapshots</h3>
+          <p>Track how Claude's storage grows over time. Compare snapshots to see what changed.</p>
+        </div>
+      </div>
+      <div class="usecase-card">
+        <div class="usecase-icon low">&#128220;</div>
+        <div class="usecase-content">
+          <h3>Debug Logs</h3>
+          <p>Something went wrong but you don't know what? Search and filter debug logs by level, component, or text.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="quickstart">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">Quick Start</div>
+      <h2 class="section-title">Up and running<br>in 30 seconds</h2>
+      <p class="section-desc">Choose the installation method that works for you. No configuration needed.</p>
+    </div>
+    <div class="install-methods reveal">
+      <div class="install-card">
+        <div class="install-header">
+          <span>&#9889; Instant Fix</span>
+          <span class="install-step">No install needed</span>
+        </div>
+        <div class="install-body">
+          <div class="code-block" id="codeInstant">
+            <button class="copy-float" id="copyInstant" aria-label="Copy">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button><span class="comment"># Scan for issues</span>
+<span class="cmd">npx</span> @asifkibria/claude-code-toolkit scan
+
+<span class="comment"># Fix them (creates backups)</span>
+<span class="cmd">npx</span> @asifkibria/claude-code-toolkit fix</div>
+          <p class="install-note">Restart Claude Code. You're back.</p>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="install-header">
+          <span>&#128230; Global Install</span>
+          <span class="install-step">Recommended</span>
+        </div>
+        <div class="install-body">
+          <div class="code-block" id="codeGlobal">
+            <button class="copy-float" id="copyGlobal" aria-label="Copy">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button><span class="cmd">npm</span> install <span class="flag">-g</span> @asifkibria/claude-code-toolkit
+
+<span class="comment"># Use the short alias</span>
+<span class="cmd">cct</span> health
+<span class="cmd">cct</span> scan
+<span class="cmd">cct</span> fix
+<span class="cmd">cct</span> dashboard</div>
+        </div>
+      </div>
+      <div class="install-card">
+        <div class="install-header">
+          <span>&#129302; MCP Server</span>
+          <span class="install-step">Self-maintaining</span>
+        </div>
+        <div class="install-body">
+          <div class="code-block" id="codeMcp">
+            <button class="copy-float" id="copyMcp" aria-label="Copy">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button><span class="cmd">claude</span> mcp add <span class="flag">--scope</span> user toolkit <span class="flag">--</span> \
+  npx <span class="flag">-y</span> @asifkibria/claude-code-toolkit \
+  claude-code-toolkit-server</div>
+          <p class="install-note">Then ask Claude: "Check your health" or "Fix any issues"</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="commands">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">CLI Reference</div>
+      <h2 class="section-title">22 commands at<br>your fingertips</h2>
+      <p class="section-desc">Every aspect of your Claude Code installation, controllable from the terminal.</p>
+    </div>
+    <div class="commands-grid reveal" id="cmdGrid"></div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="dashboard">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">Dashboard</div>
+      <h2 class="section-title">Visual control center<br>for your installation</h2>
+      <p class="section-desc">Launch a local web dashboard to monitor, manage, and troubleshoot everything in one place.</p>
+    </div>
+    <div class="dash-showcase reveal">
+      <div class="dash-window">
+        <div class="dash-titlebar">
+          <div class="dash-dot r"></div>
+          <div class="dash-dot y"></div>
+          <div class="dash-dot g"></div>
+          <span>Claude Code Toolkit &mdash; 127.0.0.1:1405</span>
+        </div>
+        <div class="dash-body">
+          <div class="dash-sidebar">
+            <div class="dash-tab active">&#9673; Overview</div>
+            <div class="dash-tab">&#128190; Storage</div>
+            <div class="dash-tab">&#128196; Sessions <span class="badge">2</span></div>
+            <div class="dash-tab">&#128274; Security <span class="badge">3</span></div>
+            <div class="dash-tab">&#128065; Traces</div>
+            <div class="dash-tab">&#128268; MCP</div>
+            <div class="dash-tab">&#128220; Logs</div>
+            <div class="dash-tab">&#9881; Config</div>
+            <div class="dash-tab">&#128247; Snapshots</div>
+            <div class="dash-tab">&#128200; Analytics</div>
+            <div class="dash-tab">&#128230; Backups</div>
+            <div class="dash-tab">&#128203; Context</div>
+            <div class="dash-tab">&#128295; Maintenance</div>
+            <div class="dash-tab">&#9432; About</div>
+          </div>
+          <div class="dash-content">
+            <div class="dash-card dash-ring">
+              <svg viewBox="0 0 80 80">
+                <circle class="ring-bg" cx="40" cy="40" r="36"/>
+                <circle class="ring-fg" cx="40" cy="40" r="36"/>
+              </svg>
+              <div class="ring-label">85% Health</div>
+            </div>
+            <div class="dash-card"><div class="dc-label">Storage</div><div class="dc-val" style="color:var(--accent)">156 MB</div></div>
+            <div class="dash-card"><div class="dc-label">Sessions</div><div class="dc-val" style="color:var(--green)">23</div></div>
+            <div class="dash-card"><div class="dc-label">Secrets</div><div class="dc-val" style="color:var(--red)">3</div></div>
+            <div class="dash-card"><div class="dc-label">Traces</div><div class="dc-val" style="color:var(--yellow)">847</div></div>
+            <div class="dash-card"><div class="dc-label">Backups</div><div class="dc-val" style="color:var(--purple)">5</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="dash-features reveal">
+      <div class="dash-feat"><div class="df-icon">&#9000;</div><div><h4>Keyboard Shortcuts</h4><p>1-0 switch tabs, R refresh, Esc close, ? help</p></div></div>
+      <div class="dash-feat"><div class="df-icon">&#128308;</div><div><h4>Nav Badges</h4><p>Issue counts on tabs with red/yellow indicators</p></div></div>
+      <div class="dash-feat"><div class="df-icon">&#128269;</div><div><h4>Session Audit</h4><p>Modal popup with tabbed file/command/tool details</p></div></div>
+      <div class="dash-feat"><div class="df-icon">&#128241;</div><div><h4>Responsive</h4><p>Mobile-friendly layout with touch targets</p></div></div>
+      <div class="dash-feat"><div class="df-icon">&#127763;</div><div><h4>Dark &amp; Light</h4><p>Auto-detects system theme preference</p></div></div>
+      <div class="dash-feat"><div class="df-icon">&#9889;</div><div><h4>Auto Refresh</h4><p>Toggle 30-second auto-refresh for live monitoring</p></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="screenshots" class="screenshots-section">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">Screenshots</div>
+      <h2 class="section-title">See it in action</h2>
+      <p class="section-desc">Real screenshots from the dashboard showing various features and tabs.</p>
+    </div>
+    <div class="screenshot-grid reveal">
+      <div class="screenshot-card">
+        <div class="screenshot-img">
+          <img src="screenshots/overview.png" alt="Overview Tab" onerror="this.classList.add('hidden')">
+          <div class="placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>screenshot: overview.png</span>
+          </div>
+        </div>
+        <div class="screenshot-info">
+          <h4>Overview Dashboard</h4>
+          <p>Health ring, stats cards, and system status at a glance</p>
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <div class="screenshot-img">
+          <img src="screenshots/sessions.png" alt="Sessions Tab" onerror="this.classList.add('hidden')">
+          <div class="placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>screenshot: sessions.png</span>
+          </div>
+        </div>
+        <div class="screenshot-info">
+          <h4>Sessions Management</h4>
+          <p>Sortable table with health status, repair and audit actions</p>
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <div class="screenshot-img">
+          <img src="screenshots/security.png" alt="Security Tab" onerror="this.classList.add('hidden')">
+          <div class="placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>screenshot: security.png</span>
+          </div>
+        </div>
+        <div class="screenshot-info">
+          <h4>Security Scanning</h4>
+          <p>Detect leaked secrets with severity badges and redact actions</p>
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <div class="screenshot-img">
+          <img src="screenshots/traces.png" alt="Traces Tab" onerror="this.classList.add('hidden')">
+          <div class="placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>screenshot: traces.png</span>
+          </div>
+        </div>
+        <div class="screenshot-info">
+          <h4>Trace Inventory</h4>
+          <p>18 categories with sensitivity levels and cleanup options</p>
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <div class="screenshot-img">
+          <img src="screenshots/analytics.png" alt="Analytics Tab" onerror="this.classList.add('hidden')">
+          <div class="placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>screenshot: analytics.png</span>
+          </div>
+        </div>
+        <div class="screenshot-info">
+          <h4>Usage Analytics</h4>
+          <p>Activity sparklines, top projects, and tool usage breakdown</p>
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <div class="screenshot-img">
+          <img src="screenshots/mcp.png" alt="MCP Tab" onerror="this.classList.add('hidden')">
+          <div class="placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span>screenshot: mcp.png</span>
+          </div>
+        </div>
+        <div class="screenshot-info">
+          <h4>MCP Server Management</h4>
+          <p>Validate configs, probe capabilities, add new servers</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<section id="mcp">
+  <div class="container">
+    <div class="reveal">
+      <div class="section-label">MCP Server</div>
+      <h2 class="section-title">24 tools for<br>self-maintaining AI</h2>
+      <p class="section-desc">Install as an MCP server and let Claude check, fix, and optimize itself through natural conversation.</p>
+    </div>
+    <div class="mcp-table-wrap reveal" id="mcpTableWrap"></div>
+  </div>
+</section>
+
+<div class="glow-line"></div>
+
+<footer>
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="f-logo">C</div>
+        <span>Claude Code Toolkit v1.2.0</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://www.npmjs.com/package/@asifkibria/claude-code-toolkit" target="_blank" rel="noopener">npm</a>
+        <a href="https://github.com/asifkibria/claude-code-toolkit" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/asifkibria/claude-code-toolkit/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/asifkibria/claude-code-toolkit/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+    </div>
+    <div class="footer-copy">Made for the Claude Code community</div>
+  </div>
+</footer>
+
+<!-- Lightbox for Screenshots -->
+<div class="lightbox" id="lightbox">
+  <div class="lightbox-content">
+    <button type="button" class="lightbox-close" aria-label="Close">&times;</button>
+    <button type="button" class="lightbox-nav prev" aria-label="Previous">&#8249;</button>
+    <button type="button" class="lightbox-nav next" aria-label="Next">&#8250;</button>
+    <img src="" alt="" id="lightboxImg">
+    <div class="lightbox-caption" id="lightboxCaption"></div>
+  </div>
+</div>
+
+<!-- Steps Modal -->
+<div class="steps-modal" id="stepsModal">
+  <div class="steps-content">
+    <div class="steps-header">
+      <h3>Getting Started</h3>
+      <button type="button" class="steps-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="steps-body">
+      <div class="steps-intro">
+        <h4>Common Problems This Fixes</h4>
+        <ul class="use-cases">
+          <li><span class="uc-icon">&#128680;</span><strong>Out of Memory / API Error:</strong> Uploaded a large image or PDF and now Claude won't respond? The conversation file is too big for the API.</li>
+          <li><span class="uc-icon">&#128274;</span><strong>Leaked Secrets:</strong> Accidentally pasted API keys or passwords in chat? Find and redact them before they're exposed.</li>
+          <li><span class="uc-icon">&#128683;</span><strong>Broken Sessions:</strong> Claude crashed mid-conversation? Recover and repair corrupted session files.</li>
+          <li><span class="uc-icon">&#128190;</span><strong>Disk Space:</strong> Months of conversation history eating up GBs? Clean old traces and archive inactive sessions.</li>
+          <li><span class="uc-icon">&#128065;</span><strong>Privacy / Trace Cleanup:</strong> Corporate security requires clearing Claude traces? Full inventory of 18 trace categories with secure wipe option.</li>
+          <li><span class="uc-icon">&#128230;</span><strong>Backup &amp; Restore:</strong> Need to undo a fix or restore a conversation? Automatic backups before every change, with easy restore.</li>
+          <li><span class="uc-icon">&#128247;</span><strong>Storage Snapshots:</strong> Track how Claude's storage grows over time. Compare snapshots to see what changed.</li>
+          <li><span class="uc-icon">&#128220;</span><strong>Debug Logs:</strong> Something went wrong but you don't know what? Search and filter debug logs by level, component, or text.</li>
+        </ul>
+      </div>
+      <div class="steps-divider"></div>
+      <h4 class="steps-section-title">Quick Fix Steps</h4>
+      <div class="step-item">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h4>Run the health check</h4>
+          <p>Paste the command you copied and press Enter. This scans your Claude Code installation for issues.</p>
+          <p class="step-cmd"><code>npx @asifkibria/claude-code-toolkit health</code></p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h4>Review the results</h4>
+          <p>You'll see a health score (0-100%) and any issues found. The tool detects oversized images (>100KB), PDFs, large documents, and leaked credentials.</p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h4>Fix issues (if any)</h4>
+          <p>If issues are found, run the fix command. It creates backups automatically before making any changes.</p>
+          <p class="step-cmd"><code>npx @asifkibria/claude-code-toolkit fix</code></p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h4>Restart Claude Code</h4>
+          <p>Close and reopen Claude Code (or VS Code). Your conversations should work again.</p>
+        </div>
+      </div>
+      <div class="steps-divider"></div>
+      <h4 class="steps-section-title">Other Useful Commands</h4>
+      <div class="step-item">
+        <div class="step-num">&#128200;</div>
+        <div class="step-content">
+          <h4>Launch the Dashboard</h4>
+          <p>Visual web interface for managing everything. 14 tabs for health, security, traces, and more.</p>
+          <p class="step-cmd"><code>npx @asifkibria/claude-code-toolkit dashboard</code></p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">&#128274;</div>
+        <div class="step-content">
+          <h4>Security Scan</h4>
+          <p>Find AWS keys, API tokens, passwords, and other secrets in your conversation history.</p>
+          <p class="step-cmd"><code>npx @asifkibria/claude-code-toolkit security-scan</code></p>
+        </div>
+      </div>
+      <div class="step-item">
+        <div class="step-num">&#128451;</div>
+        <div class="step-content">
+          <h4>Clean Up Storage</h4>
+          <p>Remove debug logs, old snapshots, and temporary files. Preview with --dry-run first.</p>
+          <p class="step-cmd"><code>npx @asifkibria/claude-code-toolkit clean --dry-run</code></p>
+        </div>
+      </div>
+      <div class="steps-divider"></div>
+      <div class="step-item">
+        <div class="step-num">&#128230;</div>
+        <div class="step-content">
+          <h4>Install Globally (Recommended)</h4>
+          <p>For frequent use, install globally to get the short <code>cct</code> command. Much faster than npx.</p>
+          <p class="step-cmd"><code>npm install -g @asifkibria/claude-code-toolkit</code></p>
+          <p class="step-note">Then use: <code>cct health</code>, <code>cct fix</code>, <code>cct dashboard</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  var commands = [
+    ['health', 'Quick health check with recommendations'],
+    ['scan', 'Scan for oversized content (dry run)'],
+    ['fix', 'Fix issues with automatic backups'],
+    ['stats', 'Conversation statistics and sizes'],
+    ['context', 'Estimate token/context usage'],
+    ['analytics', 'Usage trends and activity dashboard'],
+    ['duplicates', 'Find duplicate content and conversations'],
+    ['archive', 'Archive old/inactive conversations'],
+    ['maintenance', 'Automated maintenance checks'],
+    ['clean', 'Clean .claude directory (logs, cache)'],
+    ['mcp-validate', 'Validate MCP server configurations'],
+    ['sessions', 'List sessions with health status'],
+    ['recover', 'Diagnose, repair, or extract sessions'],
+    ['security-scan', 'Scan for leaked secrets and tokens'],
+    ['audit', 'Full audit trail of session actions'],
+    ['retention', 'Apply data retention policies'],
+    ['trace', 'Inventory and manage all traces'],
+    ['dashboard', 'Launch web dashboard on local port'],
+    ['backups', 'List all backup files'],
+    ['restore', 'Restore a conversation from backup'],
+    ['cleanup', 'Delete old backups to free space'],
+    ['export', 'Export conversation to markdown/JSON']
+  ];
+
+  var mcpTools = [
+    ['health_check', 'Quick health check with recommendations', 'core'],
+    ['scan_image_issues', 'Scan for oversized content', 'core'],
+    ['fix_image_issues', 'Fix detected issues with backups', 'core'],
+    ['get_conversation_stats', 'Detailed conversation statistics', 'core'],
+    ['estimate_context_size', 'Estimate token/context usage', 'core'],
+    ['export_conversation', 'Export to markdown or JSON', 'core'],
+    ['clean_claude_directory', 'Analyze and clean .claude dir', 'storage'],
+    ['usage_analytics', 'Usage analytics with trends', 'storage'],
+    ['find_duplicates', 'Find duplicate content', 'storage'],
+    ['archive_conversations', 'Archive inactive conversations', 'storage'],
+    ['run_maintenance', 'Run maintenance checks', 'storage'],
+    ['list_backups', 'List all backup files', 'storage'],
+    ['restore_backup', 'Restore from backup', 'storage'],
+    ['cleanup_backups', 'Delete old backups', 'storage'],
+    ['validate_mcp_config', 'Validate MCP configurations', 'session'],
+    ['list_sessions', 'List sessions with health', 'session'],
+    ['recover_session', 'Diagnose/repair/extract sessions', 'session'],
+    ['security_scan', 'Scan for leaked secrets', 'security'],
+    ['audit_session', 'Audit trail of actions', 'security'],
+    ['enforce_retention', 'Apply retention policies', 'security'],
+    ['inventory_traces', 'Complete trace inventory', 'trace'],
+    ['clean_traces', 'Selective trace cleanup', 'trace'],
+    ['wipe_traces', 'Secure wipe all traces', 'trace'],
+    ['generate_trace_guard', 'Generate hook configs', 'trace']
+  ];
+
+  var catLabels = {
+    core: ['Core', 'cat-core'],
+    storage: ['Storage', 'cat-storage'],
+    session: ['Sessions', 'cat-session'],
+    security: ['Security', 'cat-security'],
+    trace: ['Traces', 'cat-trace']
+  };
+
+  var features = [
+    ['blue', '&#128269;', 'Image &amp; PDF Fixer', 'Scan and surgically fix oversized images, PDFs, and documents that brick your conversations. Preserves everything else.'],
+    ['purple', '&#128202;', 'Web Dashboard', '14-tab interactive dashboard with health ring, sortable tables, sparkline charts, keyboard shortcuts, and modal popups.'],
+    ['green', '&#128295;', 'Session Recovery', 'Diagnose, repair, and extract content from corrupted or crashed sessions. Get your work back.'],
+    ['red', '&#128274;', 'Secret Detection', 'Find leaked API keys, AWS credentials, tokens, passwords, private keys, and JWTs in conversation files.'],
+    ['yellow', '&#128065;', 'Trace Management', 'Full inventory of 18 trace categories. Selective cleanup by age, category, or project. Secure wipe with zero-fill.'],
+    ['blue', '&#129302;', 'MCP Server', 'Install as MCP server and let Claude maintain itself. 24 tools available directly through conversation.'],
+    ['orange', '&#128200;', 'Analytics', 'Usage trends, activity sparklines, top projects by messages, tool usage breakdown with percentages.'],
+    ['green', '&#128451;', 'Archive &amp; Maintenance', 'Automated cleanup with configurable retention policies. Archive inactive conversations. Scheduled maintenance.']
+  ];
+
+  function esc(s) {
+    var div = document.createElement('div');
+    div.textContent = s;
+    return div.textContent;
+  }
+
+  function renderFeatures() {
+    var grid = document.getElementById('featuresGrid');
+    var html = '';
+    for (var i = 0; i < features.length; i++) {
+      var f = features[i];
+      html += '<div class="feature-card"><div class="fc-icon ' + f[0] + '">' + f[1] + '</div><h3>' + f[2] + '</h3><p>' + f[3] + '</p></div>';
+    }
+    grid.innerHTML = html;
+  }
+
+  function renderCommands() {
+    var grid = document.getElementById('cmdGrid');
+    var html = '';
+    for (var i = 0; i < commands.length; i++) {
+      var c = commands[i];
+      html += '<div class="cmd-card"><div class="cmd-name">cct ' + esc(c[0]) + '</div><div class="cmd-desc">' + esc(c[1]) + '</div></div>';
+    }
+    grid.innerHTML = html;
+  }
+
+  function renderMcpTable() {
+    var wrap = document.getElementById('mcpTableWrap');
+    var html = '<table class="mcp-table"><thead><tr><th>Tool</th><th>Description</th><th class="tool-cat-col">Category</th></tr></thead><tbody>';
+    for (var i = 0; i < mcpTools.length; i++) {
+      var t = mcpTools[i];
+      var cat = catLabels[t[2]];
+      html += '<tr><td class="tool-name">' + esc(t[0]) + '</td><td class="tool-desc">' + esc(t[1]) + '</td><td class="tool-cat-col"><span class="tool-cat ' + cat[1] + '">' + esc(cat[0]) + '</span></td></tr>';
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  var copySvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+  var checkSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  var heroCopySvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+  var heroCheckSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>';
+
+  function getCodeText(blockId) {
+    var el = document.getElementById(blockId);
+    if (!el) return '';
+    return el.textContent.replace(/^\s+/gm, '').trim();
+  }
+
+  function doCopy(btn, text, isBig) {
+    navigator.clipboard.writeText(text).then(function() {
+      btn.classList.add('copied');
+      btn.innerHTML = isBig ? heroCheckSvg : checkSvg;
+      setTimeout(function() {
+        btn.classList.remove('copied');
+        btn.innerHTML = isBig ? heroCopySvg : copySvg;
+      }, 2000);
+    });
+  }
+
+  document.getElementById('heroInstall').addEventListener('click', function() {
+    doCopy(document.getElementById('heroCopyBtn'), 'npx @asifkibria/claude-code-toolkit health', true);
+  });
+
+  document.getElementById('copyInstant').addEventListener('click', function(e) {
+    e.stopPropagation();
+    doCopy(this, getCodeText('codeInstant'), false);
+  });
+  document.getElementById('copyGlobal').addEventListener('click', function(e) {
+    e.stopPropagation();
+    doCopy(this, getCodeText('codeGlobal'), false);
+  });
+  document.getElementById('copyMcp').addEventListener('click', function(e) {
+    e.stopPropagation();
+    doCopy(this, getCodeText('codeMcp'), false);
+  });
+
+  document.getElementById('navToggle').addEventListener('click', function() {
+    document.getElementById('navLinks').classList.toggle('open');
+  });
+
+  var navEl = document.getElementById('mainNav');
+  window.addEventListener('scroll', function() {
+    navEl.classList.toggle('scrolled', window.scrollY > 40);
+  }, { passive: true });
+
+  var observer = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry, i) {
+      if (entry.isIntersecting) {
+        setTimeout(function() { entry.target.classList.add('visible'); }, i * 100);
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
+
+  document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el); });
+
+  var sections = document.querySelectorAll('section[id]');
+  var navLinks = document.querySelectorAll('.nav-links a');
+
+  var sectionObserver = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
+      if (entry.isIntersecting) {
+        navLinks.forEach(function(a) { a.classList.remove('active'); });
+        var link = document.querySelector('.nav-links a[href="#' + entry.target.id + '"]');
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+
+  sections.forEach(function(s) { sectionObserver.observe(s); });
+
+  renderFeatures();
+  renderCommands();
+  renderMcpTable();
+
+  // Theme toggle
+  var themeToggle = document.getElementById('themeToggle');
+  var html = document.documentElement;
+
+  // Check for saved preference or system preference
+  var savedTheme = localStorage.getItem('cct-theme');
+  if (savedTheme === 'light') {
+    html.classList.add('light');
+  } else if (!savedTheme && window.matchMedia('(prefers-color-scheme: light)').matches) {
+    html.classList.add('light');
+  }
+
+  themeToggle.addEventListener('click', function() {
+    html.classList.toggle('light');
+    localStorage.setItem('cct-theme', html.classList.contains('light') ? 'light' : 'dark');
+  });
+
+  // Listen for system preference changes
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function(e) {
+    if (!localStorage.getItem('cct-theme')) {
+      html.classList.toggle('light', e.matches);
+    }
+  });
+
+  // Steps Modal
+  var stepsModal = document.getElementById('stepsModal');
+  var viewStepsBtn = document.getElementById('viewStepsBtn');
+
+  viewStepsBtn.addEventListener('click', function() {
+    stepsModal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  });
+
+  stepsModal.querySelector('.steps-close').addEventListener('click', function() {
+    stepsModal.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+
+  stepsModal.addEventListener('click', function(e) {
+    if (e.target === stepsModal) {
+      stepsModal.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+  });
+
+  // Lightbox for Screenshots
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightboxImg');
+  var lightboxCaption = document.getElementById('lightboxCaption');
+  var screenshotCards = document.querySelectorAll('.screenshot-card');
+  var currentIndex = 0;
+
+  var screenshots = [];
+  screenshotCards.forEach(function(card, i) {
+    var img = card.querySelector('img');
+    var title = card.querySelector('h4');
+    if (img && !img.classList.contains('hidden')) {
+      screenshots.push({
+        src: img.src,
+        alt: img.alt,
+        caption: title ? title.textContent : ''
+      });
+    }
+  });
+
+  function openLightbox(index) {
+    if (screenshots.length === 0) return;
+    currentIndex = index;
+    lightboxImg.src = screenshots[index].src;
+    lightboxImg.alt = screenshots[index].alt;
+    lightboxCaption.textContent = screenshots[index].caption;
+    lightbox.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  function navigateLightbox(dir) {
+    currentIndex = (currentIndex + dir + screenshots.length) % screenshots.length;
+    lightboxImg.src = screenshots[currentIndex].src;
+    lightboxImg.alt = screenshots[currentIndex].alt;
+    lightboxCaption.textContent = screenshots[currentIndex].caption;
+  }
+
+  screenshotCards.forEach(function(card, i) {
+    var img = card.querySelector('img');
+    if (img && !img.classList.contains('hidden')) {
+      card.addEventListener('click', function() {
+        var visibleIndex = 0;
+        for (var j = 0; j < i; j++) {
+          var prevImg = screenshotCards[j].querySelector('img');
+          if (prevImg && !prevImg.classList.contains('hidden')) visibleIndex++;
+        }
+        openLightbox(visibleIndex);
+      });
+    }
+  });
+
+  lightbox.querySelector('.lightbox-close').addEventListener('click', closeLightbox);
+  lightbox.querySelector('.prev').addEventListener('click', function(e) {
+    e.stopPropagation();
+    navigateLightbox(-1);
+  });
+  lightbox.querySelector('.next').addEventListener('click', function(e) {
+    e.stopPropagation();
+    navigateLightbox(1);
+  });
+
+  lightbox.addEventListener('click', function(e) {
+    if (e.target === lightbox) closeLightbox();
+  });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', function(e) {
+    if (lightbox.classList.contains('open')) {
+      if (e.key === 'Escape') closeLightbox();
+      if (e.key === 'ArrowLeft') navigateLightbox(-1);
+      if (e.key === 'ArrowRight') navigateLightbox(1);
+    }
+    if (stepsModal.classList.contains('open') && e.key === 'Escape') {
+      stepsModal.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -14,6 +14,11 @@ export interface ContentIssue {
   estimatedSize: number;
 }
 
+export interface ScannerOptions {
+  minBase64Size?: number;
+  minTextSize?: number;
+}
+
 export interface ScanResult {
   file: string;
   issues: ContentIssue[];
@@ -90,8 +95,9 @@ export function findBackupFiles(dir: string): string[] {
   return backups;
 }
 
-function detectContentType(item: Record<string, unknown>): IssueType {
+function detectContentType(item: Record<string, unknown>, options?: ScannerOptions): IssueType {
   const type = item.type as string | undefined;
+  const minText = options?.minTextSize ?? MIN_PROBLEMATIC_TEXT_SIZE;
 
   if (type === "image") return "image";
   if (type === "document") {
@@ -102,7 +108,7 @@ function detectContentType(item: Record<string, unknown>): IssueType {
   }
   if (type === "text") {
     const text = item.text as string | undefined;
-    if (text && text.length > MIN_PROBLEMATIC_TEXT_SIZE) return "large_text";
+    if (text && text.length > minText) return "large_text";
   }
 
   return "unknown";
@@ -127,15 +133,17 @@ function getContentSize(item: Record<string, unknown>): number {
   return 0;
 }
 
-function isProblematicContent(item: Record<string, unknown>): boolean {
+function isProblematicContent(item: Record<string, unknown>, options?: ScannerOptions): boolean {
   const type = item.type as string | undefined;
+  const minBase64 = options?.minBase64Size ?? MIN_PROBLEMATIC_BASE64_SIZE;
+  const minText = options?.minTextSize ?? MIN_PROBLEMATIC_TEXT_SIZE;
 
   // Check images
   if (type === "image") {
     const source = item.source as Record<string, unknown> | undefined;
     if (source?.type === "base64") {
       const data = source.data as string | undefined;
-      return (data?.length || 0) > MIN_PROBLEMATIC_BASE64_SIZE;
+      return (data?.length || 0) > minBase64;
     }
   }
 
@@ -144,21 +152,22 @@ function isProblematicContent(item: Record<string, unknown>): boolean {
     const source = item.source as Record<string, unknown> | undefined;
     if (source?.type === "base64") {
       const data = source.data as string | undefined;
-      return (data?.length || 0) > MIN_PROBLEMATIC_BASE64_SIZE;
+      return (data?.length || 0) > minBase64;
     }
   }
 
   // Check large text content
   if (type === "text") {
     const text = item.text as string | undefined;
-    return (text?.length || 0) > MIN_PROBLEMATIC_TEXT_SIZE;
+    return (text?.length || 0) > minText;
   }
 
   return false;
 }
 
 export function checkContentForIssues(
-  content: unknown
+  content: unknown,
+  options?: ScannerOptions
 ): { hasProblems: boolean; indices: (number | [number, number])[]; totalSize: number; contentType: IssueType } {
   if (!Array.isArray(content)) {
     return { hasProblems: false, indices: [], totalSize: 0, contentType: "unknown" };
@@ -176,9 +185,9 @@ export function checkContentForIssues(
     const size = getContentSize(itemObj);
     totalSize += size;
 
-    if (isProblematicContent(itemObj)) {
+    if (isProblematicContent(itemObj, options)) {
       problematicIndices.push(i);
-      detectedType = detectContentType(itemObj);
+      detectedType = detectContentType(itemObj, options);
     }
 
     // Check nested content in tool_result
@@ -192,9 +201,9 @@ export function checkContentForIssues(
             const innerSize = getContentSize(innerObj);
             totalSize += innerSize;
 
-            if (isProblematicContent(innerObj)) {
+            if (isProblematicContent(innerObj, options)) {
               problematicIndices.push([i, j]);
-              detectedType = detectContentType(innerObj);
+              detectedType = detectContentType(innerObj, options);
             }
           }
         }
@@ -260,7 +269,7 @@ export function fixContentInMessage(
 // Keep old function name for backwards compatibility
 export const fixImageInContent = fixContentInMessage;
 
-export function scanFile(filePath: string): ScanResult {
+export function scanFile(filePath: string, options?: ScannerOptions): ScanResult {
   const issues: ContentIssue[] = [];
 
   let content: string;
@@ -287,7 +296,7 @@ export function scanFile(filePath: string): ScanResult {
     const messageContent = message?.content;
 
     if (messageContent) {
-      const { hasProblems, indices, totalSize, contentType } = checkContentForIssues(messageContent);
+      const { hasProblems, indices, totalSize, contentType } = checkContentForIssues(messageContent, options);
       if (hasProblems) {
         issues.push({
           line: lineNum + 1,
@@ -302,7 +311,7 @@ export function scanFile(filePath: string): ScanResult {
     if (data.toolUseResult) {
       const toolResult = data.toolUseResult as Record<string, unknown>;
       const resultContent = toolResult.content;
-      const { hasProblems, indices, totalSize, contentType } = checkContentForIssues(resultContent);
+      const { hasProblems, indices, totalSize, contentType } = checkContentForIssues(resultContent, options);
       if (hasProblems) {
         const existingIssue = issues.find((i) => i.line === lineNum + 1);
         if (!existingIssue) {

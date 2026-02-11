@@ -32,6 +32,43 @@ import {
   type IssueType,
   type ExportFormat,
 } from "./lib/scanner.js";
+import {
+  analyzeClaudeStorage,
+  cleanClaudeDirectory,
+  findCleanupTargets,
+  formatStorageReport,
+  formatCleanupReport,
+} from "./lib/storage.js";
+import {
+  diagnoseMcpServers,
+  formatMcpDiagnosticReport,
+} from "./lib/mcp-validator.js";
+import {
+  listSessions,
+  diagnoseSession,
+  repairSession,
+  extractSessionContent,
+  formatSessionReport,
+  formatSessionDiagnosticReport,
+} from "./lib/session-recovery.js";
+import {
+  scanForSecrets,
+  auditSession,
+  enforceRetention,
+  formatSecretsScanReport,
+  formatAuditReport,
+  formatRetentionReport,
+} from "./lib/security.js";
+import {
+  inventoryTraces,
+  cleanTraces,
+  wipeAllTraces,
+  generateTraceGuardHooks,
+  formatTraceInventory,
+  formatTraceCleanReport,
+  formatTraceGuardConfig,
+} from "./lib/trace.js";
+import { startDashboard, stopDashboard, isDashboardRunning } from "./lib/dashboard.js";
 
 function formatContentType(type: IssueType): string {
   switch (type) {
@@ -58,28 +95,41 @@ function formatDate(date: Date): string {
 
 function printHelp() {
   console.log(`
-Claude Code Toolkit v1.0.7
-Maintain, optimize, and troubleshoot your Claude Code installation.
-Fixes oversized images, PDFs, documents, and large text content.
+Claude Code Toolkit v1.2.0
+Maintain, optimize, secure, and troubleshoot your Claude Code installation.
 
 USAGE:
   cct <command> [options]
   claude-code-toolkit <command> [options]
 
 COMMANDS:
-  health            Quick health check (start here!)
-  stats             Show conversation statistics
-  context           Estimate context/token usage
-  analytics         Usage analytics dashboard
-  duplicates        Find duplicate content and conversations
-  archive           Archive old/inactive conversations
-  maintenance       Run maintenance checks and actions
-  scan              Scan for issues (dry run)
-  fix               Fix all detected issues
-  export            Export conversation to markdown or JSON
-  backups           List backup files
-  restore <path>    Restore from a backup file
-  cleanup           Delete old backup files
+  health              Quick health check (start here!)
+  stats               Show conversation statistics
+  context             Estimate context/token usage
+  analytics           Usage analytics dashboard
+  duplicates          Find duplicate content and conversations
+  archive             Archive old/inactive conversations
+  maintenance         Run maintenance checks and actions
+  scan                Scan for issues (dry run)
+  fix                 Fix all detected issues
+  export              Export conversation to markdown or JSON
+  backups             List backup files
+  restore <path>      Restore from a backup file
+  cleanup             Delete old backup files
+  clean               Analyze and clean .claude directory
+  mcp-validate        Validate MCP server configurations
+  sessions            List all sessions with health status
+  recover <id>        Diagnose/repair/extract from a session
+  security-scan       Scan conversations for leaked secrets
+  audit <id>          Audit a session's actions (files, commands, etc.)
+  retention           Enforce data retention policy
+  dashboard           Open web dashboard in browser
+  dashboard --daemon   Run dashboard as background process
+  dashboard --stop     Stop background dashboard
+  trace               Show full trace inventory
+  trace clean         Selective trace cleanup
+  trace wipe          Secure wipe all traces (requires --confirm)
+  trace guard         Generate trace prevention hooks
 
 OPTIONS:
   -f, --file <path>     Target a specific file
@@ -88,27 +138,40 @@ OPTIONS:
   --with-tools          Include tool results in export
   -d, --dry-run         Show what would be done without making changes
   --no-backup           Skip creating backups when fixing (not recommended)
-  --days <n>            For cleanup/archive: days threshold (default: 7/30)
+  --days <n>            For cleanup/archive/retention: days threshold (default: 7/30)
   --limit <n>           For stats: limit results (default: 10)
   --sort <field>        For stats: sort by size|messages|images|modified
   --auto                For maintenance: run automatically without prompts
   --schedule            For maintenance: show cron/launchd setup
+  --category <type>     For clean: target specific category
+  --test                For mcp-validate: test server connectivity
+  --extract             For recover: extract salvageable content
+  --repair              For recover: attempt repair
+  --confirm             For trace wipe: confirm destructive operation
+  --keep-settings       For trace wipe: preserve settings.json
+  --mode <mode>         For trace guard: paranoid|moderate|minimal
+  --install             For trace guard: auto-install hooks
+  --categories <list>   For trace clean: comma-separated categories
+  --port <n>            For dashboard: port number (default: 1405)
+  --daemon              For dashboard: run as background process
+  --stop                For dashboard: stop background process
+  --project <path>      Filter by project path
   -h, --help            Show this help message
   -v, --version         Show version
 
 EXAMPLES:
   cct health                        # Quick health check
-  cct stats --limit 5 --sort size   # Top 5 largest conversations
-  cct context -f /path/to/file      # Estimate context/token usage
-  cct analytics                     # Usage analytics dashboard
-  cct duplicates                    # Find duplicate content
-  cct archive --days 60 --dry-run   # Preview conversations to archive
-  cct maintenance                   # Run maintenance checks
-  cct maintenance --schedule        # Show scheduled maintenance setup
-  cct scan                          # Scan for issues
-  cct fix                           # Fix all issues
-  cct export -f /path/to/file       # Export to markdown
-  cct cleanup --days 30 --dry-run   # Preview old backups to delete
+  cct clean --dry-run               # Preview .claude directory cleanup
+  cct mcp-validate --test           # Validate and test MCP servers
+  cct sessions                      # List all sessions
+  cct recover abc-123 --repair      # Repair a corrupted session
+  cct security-scan                 # Scan for leaked secrets
+  cct audit abc-123                 # Audit session actions
+  cct retention --days 60 --dry-run # Preview retention policy
+  cct trace                         # Show trace inventory
+  cct trace clean --days 7          # Clean old traces
+  cct trace wipe --confirm          # Secure wipe all traces
+  cct trace guard --mode moderate   # Generate trace prevention hooks
 
 For more info: https://github.com/asifkibria/claude-code-toolkit
 `);
@@ -116,6 +179,7 @@ For more info: https://github.com/asifkibria/claude-code-toolkit
 
 function parseArgs(args: string[]): {
   command: string;
+  subcommand?: string;
   file?: string;
   output?: string;
   format: ExportFormat;
@@ -127,9 +191,23 @@ function parseArgs(args: string[]): {
   sort: string;
   auto: boolean;
   schedule: boolean;
+  category?: string;
+  test: boolean;
+  extract: boolean;
+  repair: boolean;
+  confirm: boolean;
+  keepSettings: boolean;
+  mode: string;
+  install: boolean;
+  categories?: string;
+  project?: string;
+  port: number;
+  daemon: boolean;
+  stop: boolean;
 } {
   const result = {
     command: "",
+    subcommand: undefined as string | undefined,
     file: undefined as string | undefined,
     output: undefined as string | undefined,
     format: "markdown" as ExportFormat,
@@ -141,6 +219,19 @@ function parseArgs(args: string[]): {
     sort: "size",
     auto: false,
     schedule: false,
+    category: undefined as string | undefined,
+    test: false,
+    extract: false,
+    repair: false,
+    confirm: false,
+    keepSettings: false,
+    mode: "moderate",
+    install: false,
+    categories: undefined as string | undefined,
+    project: undefined as string | undefined,
+    port: 1405,
+    daemon: false,
+    stop: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -152,7 +243,7 @@ function parseArgs(args: string[]): {
     }
 
     if (arg === "-v" || arg === "--version") {
-      console.log("1.0.7");
+      console.log("1.2.0");
       process.exit(0);
     }
 
@@ -214,13 +305,84 @@ function parseArgs(args: string[]): {
       continue;
     }
 
+    if (arg === "--category") {
+      result.category = args[++i];
+      continue;
+    }
+
+    if (arg === "--test") {
+      result.test = true;
+      continue;
+    }
+
+    if (arg === "--extract") {
+      result.extract = true;
+      continue;
+    }
+
+    if (arg === "--repair") {
+      result.repair = true;
+      continue;
+    }
+
+    if (arg === "--confirm") {
+      result.confirm = true;
+      continue;
+    }
+
+    if (arg === "--keep-settings") {
+      result.keepSettings = true;
+      continue;
+    }
+
+    if (arg === "--mode") {
+      result.mode = args[++i];
+      continue;
+    }
+
+    if (arg === "--install") {
+      result.install = true;
+      continue;
+    }
+
+    if (arg === "--categories") {
+      result.categories = args[++i];
+      continue;
+    }
+
+    if (arg === "--port") {
+      result.port = parseInt(args[++i], 10);
+      continue;
+    }
+
+    if (arg === "--daemon") {
+      result.daemon = true;
+      continue;
+    }
+
+    if (arg === "--stop") {
+      result.stop = true;
+      continue;
+    }
+
+    if (arg === "--project") {
+      result.project = args[++i];
+      continue;
+    }
+
     if (!arg.startsWith("-") && !result.command) {
       result.command = arg;
       continue;
     }
 
-    if (!arg.startsWith("-") && result.command === "restore") {
+    if (!arg.startsWith("-") && (result.command === "restore" || result.command === "recover" || result.command === "audit")) {
       result.file = arg;
+      continue;
+    }
+
+    if (!arg.startsWith("-") && result.command === "trace" && !result.subcommand) {
+      result.subcommand = arg;
+      continue;
     }
   }
 
@@ -611,6 +773,167 @@ async function cmdMaintenance(dryRun: boolean, auto: boolean, schedule: boolean)
   }
 }
 
+async function cmdClean(dryRun: boolean, days: number, category?: string) {
+  const analysis = analyzeClaudeStorage();
+  console.log(formatStorageReport(analysis));
+
+  const options = { dryRun: dryRun || true, days, categories: category ? [category] : undefined };
+  const targets = findCleanupTargets(undefined, options);
+
+  if (targets.length === 0) {
+    console.log("\x1b[32m✓ Nothing to clean.\x1b[0m\n");
+    return;
+  }
+
+  const result = cleanClaudeDirectory(undefined, { ...options, dryRun });
+  console.log(formatCleanupReport(targets, result, dryRun));
+}
+
+async function cmdMcpValidate(file?: string, test?: boolean) {
+  const report = await diagnoseMcpServers({ test, projectDir: process.cwd() });
+  console.log(formatMcpDiagnosticReport(report));
+}
+
+async function cmdSessions(project?: string) {
+  const sessions = listSessions(undefined, { project });
+  if (sessions.length === 0) {
+    console.log("No sessions found.\n");
+    return;
+  }
+  console.log(formatSessionReport(sessions));
+}
+
+async function cmdRecover(sessionId?: string, extract?: boolean, repair?: boolean) {
+  if (!sessionId) {
+    console.error("Usage: cct recover <session-id> [--extract] [--repair]");
+    process.exit(1);
+  }
+
+  const sessions = listSessions();
+  const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.error(`Session not found: ${sessionId}`);
+    process.exit(1);
+  }
+
+  const diag = diagnoseSession(session.filePath);
+  console.log(formatSessionDiagnosticReport(diag));
+
+  if (repair) {
+    console.log("\nRepairing session...");
+    const result = repairSession(session.filePath);
+    if (result.success) {
+      console.log(`\x1b[32m✓ Repaired. Removed ${result.linesRemoved} invalid lines.\x1b[0m`);
+      if (result.backupPath) console.log(`  Backup: ${result.backupPath}`);
+    } else {
+      console.log(`\x1b[31m✗ Repair failed: ${result.error}\x1b[0m`);
+    }
+  }
+
+  if (extract) {
+    console.log("\nExtracting session content...");
+    const content = extractSessionContent(session.filePath);
+    console.log(`  User messages: ${content.userMessages.length}`);
+    console.log(`  Assistant messages: ${content.assistantMessages.length}`);
+    console.log(`  File edits: ${content.fileEdits.length}`);
+    console.log(`  Commands run: ${content.commandsRun.length}`);
+
+    if (content.fileEdits.length > 0) {
+      console.log("\nFile edits:");
+      for (const edit of content.fileEdits.slice(0, 10)) {
+        console.log(`  ${edit.path}`);
+      }
+    }
+    if (content.commandsRun.length > 0) {
+      console.log("\nCommands:");
+      for (const cmd of content.commandsRun.slice(0, 10)) {
+        const short = cmd.length > 80 ? cmd.slice(0, 77) + "..." : cmd;
+        console.log(`  $ ${short}`);
+      }
+    }
+  }
+}
+
+async function cmdSecurityScan(file?: string) {
+  console.log("Scanning for secrets in conversation data...\n");
+  const result = scanForSecrets(undefined, { file });
+  console.log(formatSecretsScanReport(result));
+}
+
+async function cmdAudit(sessionId?: string) {
+  if (!sessionId) {
+    console.error("Usage: cct audit <session-id>");
+    process.exit(1);
+  }
+
+  const sessions = listSessions();
+  const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.error(`Session not found: ${sessionId}`);
+    process.exit(1);
+  }
+
+  const audit = auditSession(session.filePath);
+  console.log(formatAuditReport(audit));
+}
+
+async function cmdRetention(days: number, dryRun: boolean) {
+  const retentionDays = days > 7 ? days : 30;
+  const result = enforceRetention(undefined, { days: retentionDays, dryRun });
+  console.log(formatRetentionReport(result));
+}
+
+async function cmdTrace(subcommand?: string, options?: {
+  dryRun: boolean; days: number; categories?: string; project?: string;
+  confirm: boolean; keepSettings: boolean; mode: string; install: boolean;
+}) {
+  if (!subcommand) {
+    const inv = inventoryTraces(undefined, { project: options?.project });
+    console.log(formatTraceInventory(inv));
+    return;
+  }
+
+  if (subcommand === "clean") {
+    const cleanOpts = {
+      dryRun: options?.dryRun ?? true,
+      days: options?.days,
+      categories: options?.categories?.split(","),
+      project: options?.project,
+    };
+    const result = cleanTraces(undefined, cleanOpts);
+    console.log(formatTraceCleanReport(result));
+    return;
+  }
+
+  if (subcommand === "wipe") {
+    if (!options?.confirm) {
+      console.log("\x1b[31m⚠ This will securely wipe ALL Claude Code traces.\x1b[0m");
+      console.log("Run with --confirm to execute.\n");
+      const inv = inventoryTraces();
+      console.log(`Would wipe: ${inv.totalFiles} files (${formatBytes(inv.totalSize)})`);
+      return;
+    }
+    const result = wipeAllTraces(undefined, {
+      confirm: true,
+      keepSettings: options.keepSettings,
+    });
+    console.log(result.wipeReceipt);
+    return;
+  }
+
+  if (subcommand === "guard") {
+    const mode = (options?.mode || "moderate") as "paranoid" | "moderate" | "minimal";
+    const config = generateTraceGuardHooks({ mode });
+    console.log(formatTraceGuardConfig(config));
+    return;
+  }
+
+  console.error(`Unknown trace subcommand: ${subcommand}`);
+  console.error("Usage: cct trace [clean|wipe|guard]");
+}
+
 async function cmdHealth() {
   if (!fs.existsSync(PROJECTS_DIR)) {
     console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
@@ -704,6 +1027,56 @@ async function main() {
       break;
     case "health":
       await cmdHealth();
+      break;
+    case "clean":
+      await cmdClean(args.dryRun, args.days, args.category);
+      break;
+    case "mcp-validate":
+      await cmdMcpValidate(args.file, args.test);
+      break;
+    case "sessions":
+      await cmdSessions(args.project);
+      break;
+    case "recover":
+      await cmdRecover(args.file, args.extract, args.repair);
+      break;
+    case "security-scan":
+      await cmdSecurityScan(args.file);
+      break;
+    case "audit":
+      await cmdAudit(args.file);
+      break;
+    case "retention":
+      await cmdRetention(args.days, args.dryRun);
+      break;
+    case "trace":
+      await cmdTrace(args.subcommand, {
+        dryRun: args.dryRun,
+        days: args.days,
+        categories: args.categories,
+        project: args.project,
+        confirm: args.confirm,
+        keepSettings: args.keepSettings,
+        mode: args.mode,
+        install: args.install,
+      });
+      break;
+    case "dashboard":
+      if (args.stop) {
+        const stopped = stopDashboard();
+        if (stopped) {
+          console.log("\x1b[32m✓ Dashboard stopped.\x1b[0m");
+        } else {
+          const status = isDashboardRunning();
+          if (!status.running) {
+            console.log("No dashboard process found.");
+          } else {
+            console.error("Failed to stop dashboard.");
+          }
+        }
+      } else {
+        await startDashboard({ port: args.port, daemon: args.daemon });
+      }
       break;
     default:
       console.error(`Unknown command: ${args.command}`);
