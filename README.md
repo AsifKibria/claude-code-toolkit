@@ -1,9 +1,17 @@
 # Claude Code Toolkit
 
 [![npm version](https://img.shields.io/npm/v/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
+[![npm downloads](https://img.shields.io/npm/dm/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/nicholasgriffintn/claude-code-toolkit?style=social)](https://github.com/nicholasgriffintn/claude-code-toolkit)
 
-Maintain, optimize, secure, and troubleshoot your Claude Code installation. Fix broken sessions, manage storage, detect secrets, and monitor everything through a web dashboard.
+**The ultimate maintenance toolkit for Claude Code.** Fix broken sessions, search conversations, detect secrets & PII, manage storage, and monitor everything through a beautiful web dashboard.
+
+> **Love this tool?** Give us a star on GitHub! It helps others discover this project and motivates continued development.
+>
+> [![Star on GitHub](https://img.shields.io/badge/-Star%20on%20GitHub-yellow?style=for-the-badge&logo=github)](https://github.com/nicholasgriffintn/claude-code-toolkit)
+
+---
 
 ## Quick Fix
 
@@ -37,6 +45,21 @@ Then ask Claude: "Check your health" or "Fix any issues"
 
 ---
 
+## Features Overview
+
+| Category | Features |
+|----------|----------|
+| **Session Recovery** | Fix broken sessions, repair corrupted files, extract content |
+| **Search** | Full-text search across all conversations |
+| **Security** | Secret detection, PII scanning, session auditing |
+| **Storage** | Analytics, cleanup, archiving, snapshots |
+| **Monitoring** | Web dashboard, alerts, quotas, real-time updates |
+| **MCP** | Server validation, performance tracking |
+| **Git** | Link sessions to branches/commits |
+| **Cost** | Token usage and API cost estimation |
+
+---
+
 ## Core Features
 
 ### 1. Fix Broken Sessions
@@ -48,26 +71,56 @@ cct scan        # See what's wrong
 cct fix         # Fix it (creates backup automatically)
 ```
 
-### 2. Web Dashboard
+### 2. Search All Conversations
 
-Visual management of your entire Claude Code installation.
+Find anything across all your Claude Code conversations - code snippets, discussions, errors, anything.
+
+```bash
+cct search "API key"              # Search all conversations
+cct search "authentication" --role user    # Only user messages
+cct search "error" --limit 100    # More results
+```
+
+**Dashboard**: The Search tab provides a visual search interface with filters and highlighted results.
+
+### 3. Web Dashboard
+
+Visual management of your entire Claude Code installation with **15 tabs**:
 
 ```bash
 cct dashboard
 ```
 
-14 tabs: Overview, Storage, Sessions, Security, Traces, MCP, Logs, Config, Snapshots, Analytics, Backups, Context, Maintenance, About
+- **Overview** - Quick health metrics
+- **Search** - Full-text search with filters
+- **Storage** - Usage analytics
+- **Sessions** - All sessions with health status
+- **Security** - Secret & PII scanning
+- **Traces** - Data inventory
+- **MCP** - Server status & tools
+- **Logs** - Debug log viewer
+- **Config** - Settings editor
+- **Analytics** - Usage trends
+- **Backups** - Backup management
+- **Context** - Token estimation
+- **Maintenance** - Automated cleanup
+- **Snapshots** - Storage tracking
+- **About** - Version info
 
-### 3. Security Scanning
+### 4. Security Scanning
 
-Find leaked secrets in your conversations.
+Find leaked secrets AND personal data (PII) in your conversations.
 
 ```bash
-cct security-scan     # Scan all conversations
+cct security-scan     # Scan for secrets (API keys, tokens, passwords)
+cct pii-scan          # Scan for PII (emails, phones, SSN, credit cards)
+cct pii-scan --details # Show full unmasked values
 cct audit abc123      # Full audit trail of session
 ```
 
-### 4. Storage Management
+**Dashboard**: Security tab shows secrets and PII with one-click redaction.
+
+### 5. Storage Management
 
 ```bash
 cct clean             # Remove debug logs, old snapshots
@@ -75,118 +128,64 @@ cct archive --days 60 # Archive old conversations
 cct trace clean       # Selective trace cleanup
 ```
 
+### 6. Git Integration
+
+Link your Claude sessions to git branches and commits.
+
+```bash
+cct git               # Show sessions linked to git repos
+```
+
+### 7. Cost Estimation
+
+Estimate API costs based on token usage.
+
+```bash
+cct cost              # Show estimated API costs
+```
+
+### 8. Alerts & Quotas
+
+Proactive issue detection and usage monitoring.
+
+```bash
+cct alerts            # Check for issues and notifications
+cct quotas            # Show usage quotas with visual bars
+```
+
 ---
 
 ## Common Problems & Solutions
 
-### 🚨 Out of Memory / API Error
-
-Uploaded a large image or PDF and now Claude won't respond? The conversation file is too big for the API.
-
+### Your session is broken
 ```bash
-cct scan                    # Identify oversized content
-cct fix                     # Remove problematic content (creates backup)
-# Restart Claude Code - you're back
+cct scan && cct fix
 ```
 
-### 🔐 Leaked Secrets
-
-Accidentally pasted API keys, passwords, or tokens in chat? Find and audit them before they're exposed.
-
+### Find something you discussed
 ```bash
-cct security-scan           # Scan for AWS keys, tokens, passwords
-cct audit abc123            # Full audit trail of what was accessed
+cct search "your query"
 ```
 
-### 🛑 Broken Sessions
-
-Claude crashed mid-conversation and `--resume` doesn't work? Recover and repair corrupted session files.
-
+### Leaked secrets or PII
 ```bash
-cct sessions                # List all sessions with health status
-cct recover abc123          # Diagnose the session
-cct recover abc123 --repair # Fix corrupted lines
-cct recover abc123 --extract # Extract salvageable content
+cct security-scan
+cct pii-scan --details
 ```
 
-### 💾 Disk Space
-
-Months of conversation history eating up GBs? Clean old traces and archive inactive sessions.
-
+### Disk space issues
 ```bash
-cct stats                   # See what's using space
-cct clean --dry-run         # Preview cleanup
-cct clean                   # Remove debug logs, old snapshots
-cct archive --days 30       # Archive old conversations
+cct stats && cct clean
 ```
 
-### 👁 Privacy / Trace Cleanup
-
-Corporate security requires clearing Claude traces? Full inventory of 18 trace categories with secure wipe.
-
+### Session crashed
 ```bash
-cct trace                           # Full inventory of stored data
-cct trace clean --days 7            # Remove traces older than 7 days
-cct trace wipe --confirm            # Secure wipe everything
-cct trace guard --mode paranoid     # Auto-delete going forward
+cct recover abc123 --repair
 ```
 
-### 📦 Backup & Restore
-
-Need to undo a fix or restore a conversation? Automatic backups before every change.
-
+### MCP not working
 ```bash
-cct backups                 # List available backups
-cct restore /path/to/backup # Restore original
-cct cleanup --days 30       # Delete old backups
-```
-
-### 📷 Storage Snapshots
-
-Track how Claude's storage grows over time. Compare snapshots to see what changed.
-
-```bash
-cct dashboard               # Snapshots tab in web UI
-# Or via MCP: snapshot, compare, delete-snapshot actions
-```
-
-### 📜 Debug Logs
-
-Something went wrong but you don't know what? Search and filter debug logs by level, component, or text.
-
-```bash
-cct dashboard               # Logs tab with search and filtering
-# Filter by level (DEBUG, INFO, WARN, ERROR)
-# Search by component or message text
-```
-
-### 🔌 MCP Servers Not Connecting
-
-MCP servers aren't working? Validate configs and test connectivity.
-
-```bash
-cct mcp-validate            # Check all MCP configs
-cct mcp-validate --test     # Test actual connectivity
-cct dashboard               # MCP tab shows tools/resources per server
-```
-
-### 📊 Visual Dashboard
-
-Want a visual overview of everything? 14 tabs for complete management.
-
-```bash
-cct dashboard               # Opens web UI at localhost:1405
-cct dashboard --port 9000   # Custom port
-cct dashboard --daemon      # Run in background
-```
-
-### 📤 Export Conversations
-
-Need to export a conversation for backup or sharing?
-
-```bash
-cct export -f /path/to/conversation.jsonl
-cct export -f conversation.jsonl --format json
+cct mcp-validate --test
 ```
 
 ---
@@ -199,39 +198,34 @@ cct export -f conversation.jsonl --format json
 | `cct scan` | Find issues without fixing |
 | `cct fix` | Fix issues (with backup) |
 | `cct dashboard` | Launch web dashboard |
+| `cct search` | **Search all conversations** |
 | `cct stats` | Conversation statistics |
 | `cct context` | Token/context usage |
+| `cct cost` | **API cost estimation** |
 | `cct analytics` | Usage trends and patterns |
 | `cct duplicates` | Find duplicate content |
 | `cct clean` | Clean .claude directory |
 | `cct archive` | Archive old conversations |
 | `cct maintenance` | Automated maintenance |
 | `cct sessions` | List all sessions |
+| `cct diff` | **Compare two sessions** |
 | `cct recover` | Repair crashed sessions |
 | `cct security-scan` | Find leaked secrets |
+| `cct pii-scan` | **Find personal data (PII)** |
 | `cct audit` | Session audit trail |
 | `cct retention` | Apply data retention |
+| `cct git` | **Link sessions to git** |
+| `cct alerts` | **Check for issues** |
+| `cct quotas` | **Show usage quotas** |
+| `cct mcp-validate` | Validate MCP configs |
+| `cct mcp-perf` | **MCP performance stats** |
 | `cct trace` | Trace inventory |
 | `cct trace clean` | Selective cleanup |
 | `cct trace wipe` | Secure wipe |
-| `cct mcp-validate` | Validate MCP configs |
 | `cct backups` | List backups |
 | `cct restore` | Restore from backup |
 | `cct cleanup` | Delete old backups |
 | `cct export` | Export conversation |
-
-## Common Options
-
-| Option | Used with | Description |
-|--------|-----------|-------------|
-| `--dry-run` | Most commands | Preview without changes |
-| `--days N` | clean, archive, retention | Age threshold |
-| `-f, --file` | scan, fix, export | Target specific file |
-| `--port N` | dashboard | Custom port (default: 1405) |
-| `--test` | mcp-validate | Test connectivity |
-| `--repair` | recover | Attempt repair |
-| `--extract` | recover | Extract content |
-| `--confirm` | trace wipe | Required for wipe |
 
 ---
 
@@ -239,13 +233,21 @@ cct export -f conversation.jsonl --format json
 
 When installed as MCP server, Claude can use these tools directly:
 
-- `health_check` - System health
-- `scan_image_issues` / `fix_image_issues` - Content fixes
-- `security_scan` / `audit_session` - Security
-- `clean_claude_directory` / `clean_traces` - Cleanup
-- `list_sessions` / `recover_session` - Session management
-- `validate_mcp_config` - MCP validation
-- `start_dashboard` - Launch dashboard
+| Tool | Description |
+|------|-------------|
+| `health_check` | System health |
+| `scan_image_issues` / `fix_image_issues` | Content fixes |
+| `security_scan` / `scan_pii` | Security scanning |
+| `search_conversations` | Full-text search |
+| `estimate_cost` | Cost estimation |
+| `git_integration` | Git linking |
+| `check_alerts` / `check_quotas` | Monitoring |
+| `mcp_performance` | MCP stats |
+| `audit_session` | Session auditing |
+| `clean_claude_directory` / `clean_traces` | Cleanup |
+| `list_sessions` / `recover_session` | Session management |
+| `validate_mcp_config` | MCP validation |
+| `start_dashboard` | Launch dashboard |
 
 ---
 
@@ -253,17 +255,28 @@ When installed as MCP server, Claude can use these tools directly:
 
 1. Locates Claude Code data in `~/.claude/projects/`
 2. Scans `.jsonl` conversation files
-3. Detects oversized content (images >100KB, PDFs, large text)
-4. Replaces problematic content with placeholders
-5. Creates backups before any modification
+3. Detects oversized content, secrets, PII, and issues
+4. Provides fixes with automatic backups
+5. Offers visual dashboard for complete management
+
+---
+
+## Support This Project
+
+If Claude Code Toolkit has helped you:
+
+- **Star the repo** - It really helps! [![GitHub stars](https://img.shields.io/github/stars/nicholasgriffintn/claude-code-toolkit?style=social)](https://github.com/nicholasgriffintn/claude-code-toolkit)
+- **Share with colleagues** - Help others discover this tool
+- **Report bugs** - Open issues on GitHub
+- **Contribute** - PRs welcome!
 
 ---
 
 ## Links
 
 - [npm](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
-- [GitHub](https://github.com/asifkibria/claude-code-toolkit)
-- [Website](https://asifkibria.github.io/claude-code-toolkit)
+- [GitHub](https://github.com/nicholasgriffintn/claude-code-toolkit)
+- [Issues](https://github.com/nicholasgriffintn/claude-code-toolkit/issues)
 
 ## License
 

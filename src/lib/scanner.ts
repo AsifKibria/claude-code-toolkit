@@ -1,8 +1,12 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
+import * as crypto from "crypto";
 
 export const MIN_PROBLEMATIC_BASE64_SIZE = 100000; // ~100KB base64 ≈ 75KB file
 export const MIN_PROBLEMATIC_TEXT_SIZE = 500000;   // ~500KB for large text content
+const CACHE_DIR = path.join(os.homedir(), ".claude", "cache");
+const ANALYTICS_CACHE_FILE = path.join(CACHE_DIR, "usage-analytics.json");
 
 export type IssueType = "image" | "document" | "pdf" | "large_text" | "unknown";
 
@@ -1130,6 +1134,77 @@ export interface UsageAnalytics {
   generatedAt: Date;
 }
 
+interface SerializedUsageAnalytics {
+  overview: UsageAnalytics["overview"];
+  dailyActivity: DailyActivity[];
+  topProjects: Array<Omit<ProjectActivity, "lastActive"> & { lastActive: string }>;
+  toolUsage: UsageAnalytics["toolUsage"];
+  mediaStats: UsageAnalytics["mediaStats"];
+  generatedAt: string;
+}
+
+interface AnalyticsCachePayload {
+  fingerprint: string;
+  days: number;
+  data: SerializedUsageAnalytics;
+}
+
+function serializeUsageAnalytics(analytics: UsageAnalytics): SerializedUsageAnalytics {
+  return {
+    overview: analytics.overview,
+    dailyActivity: analytics.dailyActivity,
+    toolUsage: analytics.toolUsage,
+    mediaStats: analytics.mediaStats,
+    generatedAt: analytics.generatedAt.toISOString(),
+    topProjects: analytics.topProjects.map((project) => ({
+      ...project,
+      lastActive: project.lastActive.toISOString(),
+    })),
+  };
+}
+
+function hydrateUsageAnalytics(serialized: SerializedUsageAnalytics): UsageAnalytics {
+  return {
+    overview: serialized.overview,
+    dailyActivity: serialized.dailyActivity,
+    toolUsage: serialized.toolUsage,
+    mediaStats: serialized.mediaStats,
+    generatedAt: new Date(serialized.generatedAt),
+    topProjects: serialized.topProjects.map((project) => ({
+      ...project,
+      lastActive: new Date(project.lastActive),
+    })),
+  };
+}
+
+function loadUsageAnalyticsCache(fingerprint: string, days: number): UsageAnalytics | null {
+  try {
+    if (!fs.existsSync(ANALYTICS_CACHE_FILE)) return null;
+    const content = fs.readFileSync(ANALYTICS_CACHE_FILE, "utf-8");
+    const payload = JSON.parse(content) as AnalyticsCachePayload;
+    if (payload.fingerprint !== fingerprint || payload.days !== days) return null;
+    return hydrateUsageAnalytics(payload.data);
+  } catch {
+    return null;
+  }
+}
+
+function saveUsageAnalyticsCache(fingerprint: string, days: number, analytics: UsageAnalytics) {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+    const payload: AnalyticsCachePayload = {
+      fingerprint,
+      days,
+      data: serializeUsageAnalytics(analytics),
+    };
+    fs.writeFileSync(ANALYTICS_CACHE_FILE, JSON.stringify(payload));
+  } catch {
+    // ignore cache write errors
+  }
+}
+
 function getProjectFromPath(filePath: string): string {
   // Extract project name from path like ~/.claude/projects/-Users-me-myproject/conversation.jsonl
   const parts = filePath.split(path.sep);
@@ -1152,8 +1227,23 @@ function getDateFromTimestamp(timestamp: string | undefined): string | null {
 
 export function generateUsageAnalytics(projectsDir: string, days = 30): UsageAnalytics {
   const files = findAllJsonlFiles(projectsDir);
+  const fingerprintParts: string[] = [];
+  for (const file of files) {
+    try {
+      const stat = fs.statSync(file);
+      fingerprintParts.push(`${file}:${stat.size}:${stat.mtimeMs}`);
+    } catch {
+      fingerprintParts.push(`${file}:missing:0`);
+    }
+  }
+  const fingerprint = crypto.createHash("sha1").update(fingerprintParts.join("|")).digest("hex");
+  const cached = loadUsageAnalyticsCache(fingerprint, days);
+  if (cached) {
+    return cached;
+  }
 
-  const dailyMap = new Map<string, DailyActivity>();
+  type DailyEntry = { date: string; messages: number; tokens: number; conversations: Set<string> };
+  const dailyMap = new Map<string, DailyEntry>();
   const projectMap = new Map<string, ProjectActivity>();
   const toolMap = new Map<string, number>();
 
@@ -1212,17 +1302,34 @@ export function generateUsageAnalytics(projectsDir: string, days = 30): UsageAna
         continue;
       }
 
+      const message = data.message as Record<string, unknown> | undefined;
+
       // Track daily activity
       const timestamp = data.timestamp as string | undefined;
       const dateStr = getDateFromTimestamp(timestamp);
       if (dateStr) {
-        const daily = dailyMap.get(dateStr) || { date: dateStr, messages: 0, tokens: 0, conversations: 0 };
+        let daily = dailyMap.get(dateStr);
+        if (!daily) {
+          daily = { date: dateStr, messages: 0, tokens: 0, conversations: new Set<string>() };
+          dailyMap.set(dateStr, daily);
+        }
         daily.messages++;
-        dailyMap.set(dateStr, daily);
+        daily.conversations.add(file);
+
+        let lineTokens = 0;
+        if (message) {
+          const tokenBreakdown = estimateTokensFromContent(message.content);
+          lineTokens += tokenBreakdown.text + tokenBreakdown.image + tokenBreakdown.document + tokenBreakdown.toolUse;
+        }
+        if (data.toolUseResult) {
+          const toolResult = data.toolUseResult as Record<string, unknown>;
+          const resultTokens = estimateTokensFromContent(toolResult.content);
+          lineTokens += resultTokens.text + resultTokens.image + resultTokens.document;
+        }
+        daily.tokens += lineTokens;
       }
 
       // Track tool usage
-      const message = data.message as Record<string, unknown> | undefined;
       if (message?.content && Array.isArray(message.content)) {
         for (const item of message.content) {
           if (typeof item === "object" && item !== null) {
@@ -1244,12 +1351,18 @@ export function generateUsageAnalytics(projectsDir: string, days = 30): UsageAna
     date.setDate(date.getDate() - i);
     const dateStr = date.toISOString().split("T")[0];
     if (!dailyMap.has(dateStr)) {
-      dailyMap.set(dateStr, { date: dateStr, messages: 0, tokens: 0, conversations: 0 });
+      dailyMap.set(dateStr, { date: dateStr, messages: 0, tokens: 0, conversations: new Set<string>() });
     }
   }
 
   // Sort daily activity by date
-  const dailyActivity = Array.from(dailyMap.values())
+  const dailyActivity: DailyActivity[] = Array.from(dailyMap.values())
+    .map((entry) => ({
+      date: entry.date,
+      messages: entry.messages,
+      tokens: entry.tokens,
+      conversations: entry.conversations.size,
+    }))
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-days);
 
@@ -1268,7 +1381,7 @@ export function generateUsageAnalytics(projectsDir: string, days = 30): UsageAna
       percentage: totalToolUses > 0 ? Math.round((count / totalToolUses) * 100) : 0,
     }));
 
-  return {
+  const analytics: UsageAnalytics = {
     overview: {
       totalConversations: files.length,
       totalMessages,
@@ -1288,6 +1401,9 @@ export function generateUsageAnalytics(projectsDir: string, days = 30): UsageAna
     },
     generatedAt: new Date(),
   };
+
+  saveUsageAnalyticsCache(fingerprint, days, analytics);
+  return analytics;
 }
 
 function createAsciiBar(value: number, max: number, width = 20): string {

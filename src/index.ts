@@ -74,6 +74,11 @@ import {
   formatTraceGuardConfig,
 } from "./lib/trace.js";
 import { startDashboard } from "./lib/dashboard.js";
+import { searchConversations, formatSearchReport } from "./lib/search.js";
+import { scanForPII, formatPIIScanReport } from "./lib/security.js";
+import { analyzeMcpPerformance, formatMcpPerformanceReport } from "./lib/mcp-validator.js";
+import { linkSessionsToGit, formatGitLinkReport } from "./lib/git.js";
+import { checkAlerts, checkQuotas, formatAlertsReport, formatQuotasReport } from "./lib/alerts.js";
 
 const CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
@@ -445,6 +450,70 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             port: { type: "number", description: "Port number to listen on. Default: 1405" },
           },
+        },
+      },
+      {
+        name: "search_conversations",
+        description: "Full-text search across all Claude Code conversations. Find where you discussed specific topics.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            query: { type: "string", description: "Search query (min 2 chars)" },
+            limit: { type: "number", description: "Max results. Default: 50" },
+            role: { type: "string", description: "Filter by role: user, assistant, or all. Default: all" },
+            project: { type: "string", description: "Filter by project name" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "estimate_cost",
+        description: "Estimate API costs based on token usage across all conversations.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
+      {
+        name: "scan_pii",
+        description: "Scan conversations for Personal Identifiable Information (PII) like emails, phone numbers, SSNs, credit cards.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            file: { type: "string", description: "Scan a specific file. Default: all conversations" },
+          },
+        },
+      },
+      {
+        name: "mcp_performance",
+        description: "Track MCP server performance: call counts, error rates, most used tools.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
+      {
+        name: "git_integration",
+        description: "Link sessions to git branches and commits. Shows which sessions are tied to which repositories.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
+      {
+        name: "check_alerts",
+        description: "Check for issues and notifications: disk space warnings, corrupted sessions, quota violations.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
+      {
+        name: "check_quotas",
+        description: "Show usage quotas and limits: storage, sessions, retention age.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {},
         },
       },
     ],
@@ -1732,6 +1801,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{ type: "text", text: `Dashboard started at ${url}\n\nOpen this URL in your browser to view the dashboard.` }],
         };
+      }
+
+      case "search_conversations": {
+        const query = typedArgs.query as string;
+        if (!query || query.length < 2) {
+          return { content: [{ type: "text", text: "Query must be at least 2 characters." }], isError: true };
+        }
+        const searchReport = searchConversations({
+          query,
+          limit: (typedArgs.limit as number) || 50,
+          role: (typedArgs.role as "user" | "assistant" | "all") || "all",
+          project: typedArgs.project as string | undefined,
+        });
+        return { content: [{ type: "text", text: formatSearchReport(searchReport) }] };
+      }
+
+      case "estimate_cost": {
+        const costFiles = findAllJsonlFiles(PROJECTS_DIR);
+        let totalInput = 0, totalOutput = 0;
+        for (const f of costFiles) {
+          try {
+            const est = estimateContextSize(f);
+            const b = est.breakdown;
+            totalInput += b.userTokens + b.systemTokens + b.toolUseTokens;
+            totalOutput += b.assistantTokens + b.toolResultTokens;
+          } catch { /* skip */ }
+        }
+        const inputCost = (totalInput / 1_000_000) * 15;
+        const outputCost = (totalOutput / 1_000_000) * 75;
+        const total = inputCost + outputCost;
+        const costText = `API Cost Estimate (Claude Sonnet pricing)\n\nSessions: ${costFiles.length}\nInput: ${totalInput.toLocaleString()} tokens ($${inputCost.toFixed(2)})\nOutput: ${totalOutput.toLocaleString()} tokens ($${outputCost.toFixed(2)})\nTotal: $${total.toFixed(2)}`;
+        return { content: [{ type: "text", text: costText }] };
+      }
+
+      case "scan_pii": {
+        const piiResult = scanForPII(undefined, { file: typedArgs.file as string | undefined });
+        return { content: [{ type: "text", text: formatPIIScanReport(piiResult) }] };
+      }
+
+      case "mcp_performance": {
+        const perfReport = analyzeMcpPerformance();
+        return { content: [{ type: "text", text: formatMcpPerformanceReport(perfReport) }] };
+      }
+
+      case "git_integration": {
+        const gitReport = linkSessionsToGit();
+        return { content: [{ type: "text", text: formatGitLinkReport(gitReport) }] };
+      }
+
+      case "check_alerts": {
+        const alertsReport = checkAlerts();
+        return { content: [{ type: "text", text: formatAlertsReport(alertsReport) }] };
+      }
+
+      case "check_quotas": {
+        const quotas = checkQuotas();
+        return { content: [{ type: "text", text: formatQuotasReport(quotas) }] };
       }
 
       default:

@@ -512,6 +512,181 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export interface McpToolUsageStats {
+  toolName: string;
+  serverName: string;
+  callCount: number;
+  errorCount: number;
+  avgResponseTime?: number;
+  lastUsed?: Date;
+}
+
+export interface McpPerformanceReport {
+  totalCalls: number;
+  totalErrors: number;
+  errorRate: number;
+  toolStats: McpToolUsageStats[];
+  serverStats: Map<string, { calls: number; errors: number }>;
+  mostUsed: string[];
+  mostErrors: string[];
+  generatedAt: Date;
+}
+
+function findJsonlFiles(dir: string): string[] {
+  const files: string[] = [];
+  function walk(d: string) {
+    try {
+      const entries = fs.readdirSync(d, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(d, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl") && !entry.name.includes(".backup.")) {
+          files.push(full);
+        }
+      }
+    } catch { /* skip */ }
+  }
+  walk(dir);
+  return files;
+}
+
+export function analyzeMcpPerformance(claudeDir?: string): McpPerformanceReport {
+  const projectsDir = path.join(claudeDir || CLAUDE_DIR, "projects");
+  const files = findJsonlFiles(projectsDir);
+
+  const toolStats = new Map<string, McpToolUsageStats>();
+  const serverStats = new Map<string, { calls: number; errors: number }>();
+
+  let totalCalls = 0;
+  let totalErrors = 0;
+
+  for (const file of files) {
+    let content: string;
+    try {
+      content = fs.readFileSync(file, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const lines = content.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      try {
+        const data = JSON.parse(trimmed);
+        const message = data.message as Record<string, unknown> | undefined;
+        if (!message?.content) continue;
+
+        const contentArr = Array.isArray(message.content) ? message.content : [message.content];
+        for (const block of contentArr as Record<string, unknown>[]) {
+          if (block.type === "tool_use") {
+            const toolName = block.name as string;
+            if (!toolName?.startsWith("mcp__")) continue;
+
+            const parts = toolName.split("__");
+            const serverName = parts.length >= 2 ? parts[1] : "unknown";
+
+            totalCalls++;
+
+            if (!toolStats.has(toolName)) {
+              toolStats.set(toolName, {
+                toolName,
+                serverName,
+                callCount: 0,
+                errorCount: 0,
+              });
+            }
+
+            const stats = toolStats.get(toolName)!;
+            stats.callCount++;
+
+            if (!serverStats.has(serverName)) {
+              serverStats.set(serverName, { calls: 0, errors: 0 });
+            }
+            serverStats.get(serverName)!.calls++;
+
+            if (data.timestamp) {
+              stats.lastUsed = new Date(data.timestamp);
+            }
+          }
+
+          if (block.type === "tool_result" && block.is_error) {
+            const toolUseId = block.tool_use_id as string;
+            if (toolUseId) {
+              totalErrors++;
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  const sortedByUsage = [...toolStats.values()].sort((a, b) => b.callCount - a.callCount);
+  const sortedByErrors = [...toolStats.values()].filter(t => t.errorCount > 0).sort((a, b) => b.errorCount - a.errorCount);
+
+  return {
+    totalCalls,
+    totalErrors,
+    errorRate: totalCalls > 0 ? (totalErrors / totalCalls) * 100 : 0,
+    toolStats: sortedByUsage,
+    serverStats,
+    mostUsed: sortedByUsage.slice(0, 10).map(t => t.toolName),
+    mostErrors: sortedByErrors.slice(0, 5).map(t => t.toolName),
+    generatedAt: new Date(),
+  };
+}
+
+export function formatMcpPerformanceReport(report: McpPerformanceReport): string {
+  const lines: string[] = [];
+
+  lines.push("MCP Performance Report");
+  lines.push("═".repeat(50));
+  lines.push("");
+
+  lines.push("Summary:");
+  lines.push(`  Total MCP calls: ${report.totalCalls}`);
+  lines.push(`  Total errors: ${report.totalErrors}`);
+  lines.push(`  Error rate: ${report.errorRate.toFixed(2)}%`);
+  lines.push("");
+
+  if (report.serverStats.size > 0) {
+    lines.push("Usage by Server:");
+    const sorted = [...report.serverStats.entries()].sort((a, b) => b[1].calls - a[1].calls);
+    for (const [server, stats] of sorted.slice(0, 10)) {
+      const errPct = stats.calls > 0 ? ((stats.errors / stats.calls) * 100).toFixed(1) : "0.0";
+      lines.push(`  ${server}: ${stats.calls} calls (${errPct}% errors)`);
+    }
+    lines.push("");
+  }
+
+  if (report.toolStats.length > 0) {
+    lines.push("Top 10 Most Used Tools:");
+    for (const tool of report.toolStats.slice(0, 10)) {
+      const shortName = tool.toolName.replace(/^mcp__[^_]+__/, "");
+      lines.push(`  ${shortName}: ${tool.callCount} calls`);
+    }
+    lines.push("");
+  }
+
+  if (report.mostErrors.length > 0) {
+    lines.push("\x1b[33mTools with Most Errors:\x1b[0m");
+    for (const tool of report.mostErrors) {
+      const stats = report.toolStats.find(t => t.toolName === tool);
+      if (stats) {
+        const shortName = stats.toolName.replace(/^mcp__[^_]+__/, "");
+        lines.push(`  ${shortName}: ${stats.errorCount} errors`);
+      }
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 export function formatMcpDiagnosticReport(report: McpDiagnosticReport): string {
   let output = "";
   output += "╔══════════════════════════════════════════════╗\n";

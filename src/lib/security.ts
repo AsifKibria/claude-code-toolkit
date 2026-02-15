@@ -62,6 +62,121 @@ interface SecretPattern {
   severity: "critical" | "high" | "medium";
 }
 
+interface PIIPattern {
+  name: string;
+  type: string;
+  regex: RegExp;
+  category: "identifier" | "contact" | "financial" | "health" | "location";
+  sensitivity: "high" | "medium" | "low";
+}
+
+const PII_PATTERNS: PIIPattern[] = [
+  {
+    name: "Email Address",
+    type: "email",
+    regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    category: "contact",
+    sensitivity: "medium",
+  },
+  {
+    name: "US Phone Number",
+    type: "phone_us",
+    regex: /(?:\+1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}/g,
+    category: "contact",
+    sensitivity: "medium",
+  },
+  {
+    name: "International Phone",
+    type: "phone_intl",
+    regex: /\+(?:[0-9][-.\s]?){6,14}[0-9]/g,
+    category: "contact",
+    sensitivity: "medium",
+  },
+  {
+    name: "Social Security Number",
+    type: "ssn",
+    regex: /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g,
+    category: "identifier",
+    sensitivity: "high",
+  },
+  {
+    name: "Credit Card Number",
+    type: "credit_card",
+    regex: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/g,
+    category: "financial",
+    sensitivity: "high",
+  },
+  {
+    name: "IP Address",
+    type: "ip_address",
+    regex: /\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/g,
+    category: "identifier",
+    sensitivity: "low",
+  },
+  {
+    name: "Date of Birth",
+    type: "dob",
+    regex: /\b(?:born|dob|birth(?:day|date)?)[:\s]+(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})/gi,
+    category: "identifier",
+    sensitivity: "medium",
+  },
+  {
+    name: "Street Address",
+    type: "address",
+    regex: /\b\d+\s+[A-Za-z]+(?:\s+[A-Za-z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Court|Ct|Way|Place|Pl)\.?\b/gi,
+    category: "location",
+    sensitivity: "medium",
+  },
+  {
+    name: "Passport Number",
+    type: "passport",
+    regex: /\b[A-Z]{1,2}[0-9]{6,9}\b/g,
+    category: "identifier",
+    sensitivity: "high",
+  },
+  {
+    name: "Driver License",
+    type: "drivers_license",
+    regex: /\b(?:DL|driver'?s?\s+license)[:\s#]*[A-Z0-9]{5,15}\b/gi,
+    category: "identifier",
+    sensitivity: "high",
+  },
+  {
+    name: "Bank Account",
+    type: "bank_account",
+    regex: /\b(?:account|acct)[:\s#]*[0-9]{8,17}\b/gi,
+    category: "financial",
+    sensitivity: "high",
+  },
+  {
+    name: "IBAN",
+    type: "iban",
+    regex: /\b[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}(?:[A-Z0-9]?){0,16}\b/g,
+    category: "financial",
+    sensitivity: "high",
+  },
+];
+
+export interface PIIFinding {
+  file: string;
+  line: number;
+  type: string;
+  pattern: string;
+  maskedValue: string;
+  fullValue?: string;
+  category: string;
+  sensitivity: "high" | "medium" | "low";
+}
+
+export interface PIIScanResult {
+  filesScanned: number;
+  totalFindings: number;
+  findings: PIIFinding[];
+  byCategory: Record<string, number>;
+  bySensitivity: { high: number; medium: number; low: number };
+  scannedAt: Date;
+}
+
 const SECRET_PATTERNS: SecretPattern[] = [
   {
     name: "AWS Access Key ID",
@@ -149,17 +264,42 @@ function findJsonlFiles(dir: string): string[] {
   return files;
 }
 
-function extractTextFromMessage(parsed: Record<string, unknown>): string[] {
-  const texts: string[] = [];
-  const message = parsed.message as Record<string, unknown> | undefined;
-  if (!message || !message.content) return texts;
+const TEXT_MEDIA_HINTS = ["text/", "application/json", "application/xml", "application/x-yaml", "application/yaml"];
 
-  const content = Array.isArray(message.content) ? message.content : [message.content];
-  for (const block of content as Record<string, unknown>[]) {
-    if (block.type === "text" && typeof block.text === "string") {
+function decodeDocumentBlock(block: Record<string, unknown>): string | null {
+  const source = block.source as Record<string, unknown> | undefined;
+  if (!source || source.type !== "base64") return null;
+  const mediaType = (source.media_type as string | undefined) || "";
+  if (!TEXT_MEDIA_HINTS.some((hint) => mediaType.includes(hint))) return null;
+  const data = source.data as string | undefined;
+  if (!data) return null;
+  try {
+    const buffer = Buffer.from(data, "base64");
+    if (!buffer.length) return null;
+    return buffer.toString("utf-8");
+  } catch {
+    return null;
+  }
+}
+
+function collectTextFromContent(content: unknown): string[] {
+  const texts: string[] = [];
+  if (!content) return texts;
+  if (typeof content === "string") {
+    texts.push(content);
+    return texts;
+  }
+
+  const blocks = Array.isArray(content) ? content : [content];
+  for (const rawBlock of blocks) {
+    if (!rawBlock || typeof rawBlock !== "object") continue;
+    const block = rawBlock as Record<string, unknown>;
+    const type = block.type as string | undefined;
+    if (type === "text" && typeof block.text === "string") {
       texts.push(block.text);
+      continue;
     }
-    if (block.type === "tool_use") {
+    if (type === "tool_use") {
       const input = block.input as Record<string, unknown> | undefined;
       if (input) {
         for (const value of Object.values(input)) {
@@ -168,9 +308,29 @@ function extractTextFromMessage(parsed: Record<string, unknown>): string[] {
           }
         }
       }
+      continue;
+    }
+    if (type === "document") {
+      const decoded = decodeDocumentBlock(block);
+      if (decoded) texts.push(decoded);
+      continue;
+    }
+    if (type === "tool_result") {
+      const inner = block.content;
+      if (inner) {
+        texts.push(...collectTextFromContent(inner));
+      }
+      continue;
     }
   }
+
   return texts;
+}
+
+function extractTextFromMessage(parsed: Record<string, unknown>): string[] {
+  const message = parsed.message as Record<string, unknown> | undefined;
+  if (!message || !message.content) return [];
+  return collectTextFromContent(message.content);
 }
 
 export function scanForSecrets(projectsDir = PROJECTS_DIR, options?: { file?: string }): SecretsScanResult {
@@ -211,6 +371,15 @@ export function scanForSecrets(projectsDir = PROJECTS_DIR, options?: { file?: st
       }
 
       const texts = extractTextFromMessage(parsed);
+      const toolResult = parsed.toolUseResult as Record<string, unknown> | undefined;
+      if (toolResult) {
+        if (toolResult.content) {
+          texts.push(...collectTextFromContent(toolResult.content));
+        }
+        if (typeof toolResult.text === "string") {
+          texts.push(toolResult.text);
+        }
+      }
       for (const text of texts) {
         for (const pattern of SECRET_PATTERNS) {
           pattern.regex.lastIndex = 0;
@@ -235,6 +404,241 @@ export function scanForSecrets(projectsDir = PROJECTS_DIR, options?: { file?: st
   }
 
   return result;
+}
+
+export function scanForPII(projectsDir = PROJECTS_DIR, options?: { file?: string; includeFullValues?: boolean }): PIIScanResult {
+  const result: PIIScanResult = {
+    filesScanned: 0,
+    totalFindings: 0,
+    findings: [],
+    byCategory: {},
+    bySensitivity: { high: 0, medium: 0, low: 0 },
+    scannedAt: new Date(),
+  };
+
+  let files: string[];
+  if (options?.file) {
+    files = [options.file];
+  } else {
+    files = findJsonlFiles(projectsDir);
+  }
+
+  for (const file of files) {
+    result.filesScanned++;
+    let content: string;
+    try {
+      content = fs.readFileSync(file, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const texts = extractTextFromMessage(parsed);
+      for (const text of texts) {
+        for (const pattern of PII_PATTERNS) {
+          pattern.regex.lastIndex = 0;
+          const matches = text.match(pattern.regex);
+          if (matches) {
+            for (const match of matches) {
+              if (shouldFilterPII(match, pattern.type)) continue;
+
+              result.findings.push({
+                file,
+                line: i + 1,
+                type: pattern.type,
+                pattern: pattern.name,
+                maskedValue: maskPII(match, pattern.type),
+                fullValue: options?.includeFullValues ? match : undefined,
+                category: pattern.category,
+                sensitivity: pattern.sensitivity,
+              });
+              result.byCategory[pattern.category] = (result.byCategory[pattern.category] || 0) + 1;
+              result.bySensitivity[pattern.sensitivity]++;
+              result.totalFindings++;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+function shouldFilterPII(value: string, type: string): boolean {
+  if (type === "email") {
+    if (value.includes("@example.") || value.includes("@test.") || value.endsWith("@localhost")) {
+      return true;
+    }
+    if (value.includes("noreply@") || value.includes("no-reply@")) {
+      return true;
+    }
+  }
+  if (type === "ip_address") {
+    if (value.startsWith("127.") || value.startsWith("192.168.") || value.startsWith("10.") || value === "0.0.0.0") {
+      return true;
+    }
+  }
+  if (type === "phone_us") {
+    if (value.includes("555-") || value.startsWith("1234") || value === "000-000-0000") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function maskPII(value: string, type: string): string {
+  if (type === "email") {
+    const [local, domain] = value.split("@");
+    return local.slice(0, 2) + "***@" + domain;
+  }
+  if (type === "ssn" || type === "credit_card" || type === "bank_account" || type === "iban") {
+    return value.slice(0, 2) + "*".repeat(value.length - 6) + value.slice(-4);
+  }
+  if (type === "phone_us" || type === "phone_intl") {
+    return value.slice(0, 3) + "***" + value.slice(-4);
+  }
+  if (value.length <= 6) return "***";
+  return value.slice(0, 3) + "***" + value.slice(-3);
+}
+
+export function formatPIIScanReport(result: PIIScanResult, showDetails = false): string {
+  let output = "";
+  output += "╔══════════════════════════════════════════════╗\n";
+  output += "║         PII SCAN REPORT                      ║\n";
+  output += "╚══════════════════════════════════════════════╝\n\n";
+
+  output += `Files scanned: ${result.filesScanned}\n`;
+  output += `Total findings: ${result.totalFindings}\n\n`;
+
+  if (result.totalFindings === 0) {
+    output += "No PII found. ✓\n";
+    return output;
+  }
+
+  output += "By Sensitivity:\n";
+  output += `  \x1b[31mHigh:   ${result.bySensitivity.high}\x1b[0m\n`;
+  output += `  \x1b[33mMedium: ${result.bySensitivity.medium}\x1b[0m\n`;
+  output += `  \x1b[32mLow:    ${result.bySensitivity.low}\x1b[0m\n\n`;
+
+  output += "By Category:\n";
+  for (const [category, count] of Object.entries(result.byCategory)) {
+    output += `  ${category}: ${count}\n`;
+  }
+  output += "\n";
+
+  const limit = showDetails ? 50 : 25;
+  output += `Details (first ${limit}):\n`;
+  for (const finding of result.findings.slice(0, limit)) {
+    const icon = finding.sensitivity === "high" ? "🔴" : finding.sensitivity === "medium" ? "🟡" : "🟢";
+    output += `  ${icon} ${finding.pattern}\n`;
+    output += `    File: ${path.basename(finding.file)} Line: ${finding.line}\n`;
+    if (showDetails && finding.fullValue) {
+      output += `    Value: \x1b[31m${finding.fullValue}\x1b[0m (unmasked)\n`;
+    } else {
+      output += `    Value: ${finding.maskedValue}\n`;
+    }
+  }
+
+  if (result.findings.length > limit) {
+    output += `\n  ... and ${result.findings.length - limit} more findings\n`;
+  }
+
+  return output;
+}
+
+export interface PIIRedactionResult {
+  success: boolean;
+  error?: string;
+  redactedCount?: number;
+  backupPath?: string;
+  filesModified?: number;
+  piiRedacted?: number;
+  errors?: string[];
+  items?: string[];
+}
+
+export function redactPII(file: string, lineNum: number, piiType?: string): PIIRedactionResult {
+  if (!fs.existsSync(file)) return { success: false, error: "File not found" };
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = file.replace(".jsonl", `.backup.${timestamp}.jsonl`);
+  try { fs.copyFileSync(file, backupPath); } catch { return { success: false, error: "Failed to create backup" }; }
+  const content = fs.readFileSync(file, "utf-8");
+  const lines = content.split("\n");
+  if (lineNum < 1 || lineNum > lines.length) return { success: false, error: "Line out of range" };
+  const line = lines[lineNum - 1];
+  if (!line.trim()) return { success: false, error: "Empty line" };
+  let redacted = line;
+  let count = 0;
+  const patterns = piiType
+    ? PII_PATTERNS.filter(p => p.type === piiType || p.name === piiType)
+    : PII_PATTERNS;
+  for (const pat of patterns) {
+    pat.regex.lastIndex = 0;
+    const before = redacted;
+    redacted = redacted.replace(pat.regex, "[PII_REDACTED]");
+    if (redacted !== before) count++;
+  }
+  if (count === 0) return { success: false, error: "No matching PII found on this line" };
+  lines[lineNum - 1] = redacted;
+  fs.writeFileSync(file, lines.join("\n"), "utf-8");
+  return { success: true, redactedCount: count, backupPath };
+}
+
+export function redactAllPII(): PIIRedactionResult {
+  const scan = scanForPII(PROJECTS_DIR, { includeFullValues: false });
+  if (scan.totalFindings === 0) return { success: true, filesModified: 0, piiRedacted: 0 };
+  const fileGroups = new Map<string, { line: number; type: string }[]>();
+  for (const f of scan.findings) {
+    const existing = fileGroups.get(f.file) || [];
+    existing.push({ line: f.line, type: f.type });
+    fileGroups.set(f.file, existing);
+  }
+  let filesModified = 0;
+  let piiRedacted = 0;
+  const errors: string[] = [];
+  for (const [file, findings] of fileGroups) {
+    try {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = file.replace(".jsonl", `.backup.${timestamp}.jsonl`);
+      fs.copyFileSync(file, backupPath);
+      const content = fs.readFileSync(file, "utf-8");
+      const lines = content.split("\n");
+      let modified = false;
+      const processedLines = new Set<number>();
+      for (const f of findings) {
+        if (processedLines.has(f.line)) continue;
+        processedLines.add(f.line);
+        if (f.line < 1 || f.line > lines.length) continue;
+        let line = lines[f.line - 1];
+        for (const pat of PII_PATTERNS) {
+          pat.regex.lastIndex = 0;
+          const before = line;
+          line = line.replace(pat.regex, "[PII_REDACTED]");
+          if (line !== before) { piiRedacted++; modified = true; }
+        }
+        lines[f.line - 1] = line;
+      }
+      if (modified) {
+        fs.writeFileSync(file, lines.join("\n"), "utf-8");
+        filesModified++;
+      }
+    } catch (err) {
+      errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { success: true, filesModified, piiRedacted, errors, items: Array.from(fileGroups.keys()).slice(0, 50) };
 }
 
 export function auditSession(sessionPath: string): SessionAudit {

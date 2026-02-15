@@ -42,6 +42,8 @@ import {
 import {
   diagnoseMcpServers,
   formatMcpDiagnosticReport,
+  analyzeMcpPerformance,
+  formatMcpPerformanceReport,
 } from "./lib/mcp-validator.js";
 import {
   listSessions,
@@ -53,9 +55,11 @@ import {
 } from "./lib/session-recovery.js";
 import {
   scanForSecrets,
+  scanForPII,
   auditSession,
   enforceRetention,
   formatSecretsScanReport,
+  formatPIIScanReport,
   formatAuditReport,
   formatRetentionReport,
 } from "./lib/security.js";
@@ -69,6 +73,9 @@ import {
   formatTraceGuardConfig,
 } from "./lib/trace.js";
 import { startDashboard, stopDashboard, isDashboardRunning } from "./lib/dashboard.js";
+import { searchConversations, formatSearchReport, SearchOptions, compareSessionsByCID, formatSessionDiff } from "./lib/search.js";
+import { linkSessionsToGit, formatGitLinkReport } from "./lib/git.js";
+import { checkAlerts, checkQuotas, formatAlertsReport, formatQuotasReport } from "./lib/alerts.js";
 
 function formatContentType(type: IssueType): string {
   switch (type) {
@@ -95,7 +102,7 @@ function formatDate(date: Date): string {
 
 function printHelp() {
   console.log(`
-Claude Code Toolkit v1.2.0
+Claude Code Toolkit v1.3.0
 Maintain, optimize, secure, and troubleshoot your Claude Code installation.
 
 USAGE:
@@ -104,25 +111,35 @@ USAGE:
 
 COMMANDS:
   health              Quick health check (start here!)
+  search <query>      Full-text search across all conversations
   stats               Show conversation statistics
   context             Estimate context/token usage
+  cost                Estimate API costs based on token usage
   analytics           Usage analytics dashboard
   duplicates          Find duplicate content and conversations
   archive             Archive old/inactive conversations
   maintenance         Run maintenance checks and actions
   scan                Scan for issues (dry run)
   fix                 Fix all detected issues
+  watch               Monitor sessions for new oversized content
   export              Export conversation to markdown or JSON
   backups             List backup files
   restore <path>      Restore from a backup file
   cleanup             Delete old backup files
   clean               Analyze and clean .claude directory
   mcp-validate        Validate MCP server configurations
+  mcp-perf            Track MCP server performance and usage
   sessions            List all sessions with health status
+  diff <id1> <id2>    Compare two sessions
+  git                 Link sessions to git branches/commits
   recover <id>        Diagnose/repair/extract from a session
   security-scan       Scan conversations for leaked secrets
+  pii-scan            Scan conversations for personal data (PII)
+                      --details: Show unmasked values (handle with care!)
   audit <id>          Audit a session's actions (files, commands, etc.)
   retention           Enforce data retention policy
+  alerts              Check for issues and notifications
+  quotas              Show usage quotas and limits
   dashboard           Open web dashboard in browser
   dashboard --daemon   Run dashboard as background process
   dashboard --stop     Stop background dashboard
@@ -134,12 +151,14 @@ COMMANDS:
 OPTIONS:
   -f, --file <path>     Target a specific file
   -o, --output <path>   Output file path (for export)
+  -q, --query <text>    Search query text
+  --role <type>         For search: filter by role (user|assistant|all)
   --format <type>       Export format: markdown or json (default: markdown)
   --with-tools          Include tool results in export
   -d, --dry-run         Show what would be done without making changes
   --no-backup           Skip creating backups when fixing (not recommended)
   --days <n>            For cleanup/archive/retention: days threshold (default: 7/30)
-  --limit <n>           For stats: limit results (default: 10)
+  --limit <n>           For stats/search: limit results (default: 10/50)
   --sort <field>        For stats: sort by size|messages|images|modified
   --auto                For maintenance: run automatically without prompts
   --schedule            For maintenance: show cron/launchd setup
@@ -155,12 +174,19 @@ OPTIONS:
   --port <n>            For dashboard: port number (default: 1405)
   --daemon              For dashboard: run as background process
   --stop                For dashboard: stop background process
+  --token <value>       Require dashboard auth with bearer token
   --project <path>      Filter by project path
+  --json                Output structured JSON (scan/watch)
+  --interval <sec>      For watch: polling interval in seconds (default: 15)
+  --auto-fix            For watch: automatically fix detected issues
   -h, --help            Show this help message
   -v, --version         Show version
 
 EXAMPLES:
   cct health                        # Quick health check
+  cct search "authentication"       # Search all conversations
+  cct search "api" --role user      # Search only user messages
+  cct cost                          # Estimate API costs
   cct clean --dry-run               # Preview .claude directory cleanup
   cct mcp-validate --test           # Validate and test MCP servers
   cct sessions                      # List all sessions
@@ -182,6 +208,8 @@ function parseArgs(args: string[]): {
   subcommand?: string;
   file?: string;
   output?: string;
+  query?: string;
+  role?: string;
   format: ExportFormat;
   withTools: boolean;
   dryRun: boolean;
@@ -204,12 +232,19 @@ function parseArgs(args: string[]): {
   port: number;
   daemon: boolean;
   stop: boolean;
+  token?: string;
+  json: boolean;
+  interval: number;
+  autoFix: boolean;
+  details: boolean;
 } {
   const result = {
     command: "",
     subcommand: undefined as string | undefined,
     file: undefined as string | undefined,
     output: undefined as string | undefined,
+    query: undefined as string | undefined,
+    role: undefined as string | undefined,
     format: "markdown" as ExportFormat,
     withTools: false,
     dryRun: false,
@@ -232,6 +267,11 @@ function parseArgs(args: string[]): {
     port: 1405,
     daemon: false,
     stop: false,
+    token: undefined as string | undefined,
+    json: false,
+    interval: 15,
+    autoFix: false,
+    details: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -243,7 +283,7 @@ function parseArgs(args: string[]): {
     }
 
     if (arg === "-v" || arg === "--version") {
-      console.log("1.2.0");
+      console.log("1.3.0");
       process.exit(0);
     }
 
@@ -254,6 +294,16 @@ function parseArgs(args: string[]): {
 
     if (arg === "-o" || arg === "--output") {
       result.output = args[++i];
+      continue;
+    }
+
+    if (arg === "-q" || arg === "--query") {
+      result.query = args[++i];
+      continue;
+    }
+
+    if (arg === "--role") {
+      result.role = args[++i];
       continue;
     }
 
@@ -370,6 +420,31 @@ function parseArgs(args: string[]): {
       continue;
     }
 
+    if (arg === "--token") {
+      result.token = args[++i];
+      continue;
+    }
+
+    if (arg === "--json") {
+      result.json = true;
+      continue;
+    }
+
+    if (arg === "--interval") {
+      result.interval = parseInt(args[++i], 10);
+      continue;
+    }
+
+    if (arg === "--auto-fix") {
+      result.autoFix = true;
+      continue;
+    }
+
+    if (arg === "--details") {
+      result.details = true;
+      continue;
+    }
+
     if (!arg.startsWith("-") && !result.command) {
       result.command = arg;
       continue;
@@ -377,6 +452,20 @@ function parseArgs(args: string[]): {
 
     if (!arg.startsWith("-") && (result.command === "restore" || result.command === "recover" || result.command === "audit")) {
       result.file = arg;
+      continue;
+    }
+
+    if (!arg.startsWith("-") && result.command === "search" && !result.query) {
+      result.query = arg;
+      continue;
+    }
+
+    if (!arg.startsWith("-") && result.command === "diff") {
+      if (!result.file) {
+        result.file = arg;
+      } else if (!result.subcommand) {
+        result.subcommand = arg;
+      }
       continue;
     }
 
@@ -389,14 +478,40 @@ function parseArgs(args: string[]): {
   return result;
 }
 
-async function cmdScan(file?: string) {
+interface ScanSummary {
+  success: boolean;
+  filesScanned: number;
+  filesWithIssues: number;
+  totalIssues: number;
+  files: Array<{
+    file: string;
+    issues: Array<{
+      line: number;
+      type: IssueType;
+      location: string;
+      size: string;
+    }>;
+  }>;
+}
+
+async function cmdScan(file: string | undefined, asJson: boolean): Promise<ScanSummary | void> {
   if (!fs.existsSync(PROJECTS_DIR)) {
     console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
     process.exit(1);
   }
 
   const files = file ? [file] : findAllJsonlFiles(PROJECTS_DIR);
-  console.log(`Scanning ${files.length} file(s)...\n`);
+  const summary: ScanSummary = {
+    success: true,
+    filesScanned: files.length,
+    filesWithIssues: 0,
+    totalIssues: 0,
+    files: [],
+  };
+
+  if (!asJson) {
+    console.log(`Scanning ${files.length} file(s)...\n`);
+  }
 
   let totalIssues = 0;
   let filesWithIssues = 0;
@@ -408,10 +523,21 @@ async function cmdScan(file?: string) {
         filesWithIssues++;
         totalIssues += result.issues.length;
         const relPath = path.relative(PROJECTS_DIR, f);
-        console.log(`\x1b[33m${relPath}\x1b[0m`);
-        for (const issue of result.issues) {
-          console.log(`  Line ${issue.line}: ${formatContentType(issue.contentType)} (~${formatBytes(issue.estimatedSize)})`);
+        if (!asJson) {
+          console.log(`\x1b[33m${relPath}\x1b[0m`);
+          for (const issue of result.issues) {
+            console.log(`  Line ${issue.line}: ${formatContentType(issue.contentType)} (~${formatBytes(issue.estimatedSize)})`);
+          }
         }
+        summary.files.push({
+          file: relPath,
+          issues: result.issues.map((issue) => ({
+            line: issue.line,
+            type: issue.contentType,
+            location: issue.location,
+            size: formatBytes(issue.estimatedSize),
+          })),
+        });
       }
     } catch {
       // Skip
@@ -419,12 +545,124 @@ async function cmdScan(file?: string) {
   }
 
   console.log();
+  summary.totalIssues = totalIssues;
+  summary.filesWithIssues = filesWithIssues;
+
+  if (asJson) {
+    return summary;
+  }
+
   if (totalIssues === 0) {
     console.log("\x1b[32m✓ No oversized content found.\x1b[0m");
   } else {
     console.log(`\x1b[33mFound ${totalIssues} issue(s) in ${filesWithIssues} file(s).\x1b[0m`);
     console.log("Run 'cct fix' to fix them.");
   }
+}
+
+interface WatchEvent {
+  timestamp: string;
+  file: string;
+  issues: number;
+  action: "detected" | "fixed" | "error";
+  details?: string;
+}
+
+async function cmdWatch(asJson: boolean, intervalSeconds: number, autoFix: boolean): Promise<never> {
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  const effectiveSeconds = Number.isFinite(intervalSeconds) && intervalSeconds > 0 ? intervalSeconds : 15;
+  const intervalMs = Math.max(5, effectiveSeconds) * 1000;
+  const seen = new Map<string, number>();
+
+  const logEvent = (event: WatchEvent) => {
+    if (asJson) {
+      console.log(JSON.stringify(event));
+    } else {
+      const actionText = event.action === "fixed" ? "Fixed" : event.action === "error" ? "Error" : "Detected";
+      console.log(`[${event.timestamp}] ${actionText}: ${event.file} (${event.issues} issue(s))${event.details ? ` - ${event.details}` : ""}`);
+    }
+  };
+
+  const checkFiles = async () => {
+    const files = findAllJsonlFiles(PROJECTS_DIR);
+    const active = new Set<string>();
+
+    for (const file of files) {
+      active.add(file);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(file);
+      } catch {
+        continue;
+      }
+      const last = seen.get(file) || 0;
+      if (stat.mtimeMs <= last) continue;
+      seen.set(file, stat.mtimeMs);
+
+      let result: ReturnType<typeof scanFile>;
+      try {
+        result = scanFile(file);
+      } catch {
+        continue;
+      }
+
+      if (result.issues.length === 0) continue;
+      const relPath = path.relative(PROJECTS_DIR, file);
+      const eventBase: WatchEvent = {
+        timestamp: new Date().toISOString(),
+        file: relPath,
+        issues: result.issues.length,
+        action: "detected",
+      };
+
+      if (autoFix) {
+        try {
+          const fixResult = fixFile(file);
+          if (fixResult.fixed) {
+            logEvent({ ...eventBase, action: "fixed" });
+          } else {
+            logEvent({ ...eventBase, action: "error", details: "No changes applied" });
+          }
+        } catch (err) {
+          logEvent({ ...eventBase, action: "error", details: err instanceof Error ? err.message : String(err) });
+        }
+      } else {
+        logEvent(eventBase);
+      }
+    }
+
+    for (const entry of Array.from(seen.keys())) {
+      if (!active.has(entry)) {
+        seen.delete(entry);
+      }
+    }
+  };
+
+  await checkFiles();
+  if (!asJson) {
+    console.log(`Watching ${PROJECTS_DIR} every ${intervalMs / 1000}s. Press Ctrl+C to stop.`);
+    if (autoFix) {
+      console.log("Auto-fix is enabled. Backups will be created before changes.\n");
+    }
+  }
+
+  setInterval(() => {
+    checkFiles().catch((err) => {
+      if (asJson) {
+        console.log(JSON.stringify({ timestamp: new Date().toISOString(), action: "error", details: err.message }));
+      } else {
+        console.error("Watch error:", err);
+      }
+    });
+  }, intervalMs);
+
+  return new Promise(() => {
+    // Keep process alive until Ctrl+C
+  });
 }
 
 async function cmdFix(file?: string, noBackup = false) {
@@ -747,7 +985,7 @@ async function cmdArchive(days: number, dryRun: boolean) {
   }
 }
 
-async function cmdMaintenance(dryRun: boolean, auto: boolean, schedule: boolean) {
+async function cmdMaintenance(auto: boolean, schedule: boolean) {
   if (schedule) {
     console.log("Scheduled Maintenance Setup\n");
     console.log("=== For macOS (launchd) ===");
@@ -789,7 +1027,7 @@ async function cmdClean(dryRun: boolean, days: number, category?: string) {
   console.log(formatCleanupReport(targets, result, dryRun));
 }
 
-async function cmdMcpValidate(file?: string, test?: boolean) {
+async function cmdMcpValidate(test?: boolean) {
   const report = await diagnoseMcpServers({ test, projectDir: process.cwd() });
   console.log(formatMcpDiagnosticReport(report));
 }
@@ -859,6 +1097,15 @@ async function cmdSecurityScan(file?: string) {
   console.log("Scanning for secrets in conversation data...\n");
   const result = scanForSecrets(undefined, { file });
   console.log(formatSecretsScanReport(result));
+}
+
+async function cmdPIIScan(file?: string, details?: boolean) {
+  console.log("Scanning for Personal Identifiable Information (PII)...\n");
+  if (details) {
+    console.log("\x1b[33m⚠ WARNING: Showing unmasked PII values. Handle with care!\x1b[0m\n");
+  }
+  const result = scanForPII(undefined, { file, includeFullValues: details });
+  console.log(formatPIIScanReport(result, details));
 }
 
 async function cmdAudit(sessionId?: string) {
@@ -934,6 +1181,155 @@ async function cmdTrace(subcommand?: string, options?: {
   console.error("Usage: cct trace [clean|wipe|guard]");
 }
 
+async function cmdSearch(query?: string, options?: { role?: string; limit?: number; project?: string; days?: number }) {
+  if (!query || query.length < 2) {
+    console.error("Usage: cct search <query> [--role user|assistant|all] [--limit n] [--project name]");
+    console.error("Query must be at least 2 characters.");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  console.log(`Searching for "${query}"...\n`);
+
+  const searchOpts: SearchOptions = {
+    query,
+    limit: options?.limit || 50,
+    role: (options?.role as "user" | "assistant" | "all") || "all",
+    project: options?.project,
+    daysBack: options?.days,
+  };
+
+  const report = searchConversations(searchOpts);
+  console.log(formatSearchReport(report));
+}
+
+async function cmdCost() {
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  console.log("Calculating API cost estimates...\n");
+
+  const files = findAllJsonlFiles(PROJECTS_DIR);
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let sessionCount = 0;
+
+  const projectCosts: Map<string, { input: number; output: number; sessions: number }> = new Map();
+
+  for (const file of files) {
+    try {
+      const estimate = estimateContextSize(file);
+      const projectName = path.basename(path.dirname(file));
+      const b = estimate.breakdown;
+
+      const inputTokens = b.userTokens + b.systemTokens + b.toolUseTokens;
+      const outputTokens = b.assistantTokens + b.toolResultTokens;
+
+      if (!projectCosts.has(projectName)) {
+        projectCosts.set(projectName, { input: 0, output: 0, sessions: 0 });
+      }
+
+      const project = projectCosts.get(projectName)!;
+      project.input += inputTokens;
+      project.output += outputTokens;
+      project.sessions++;
+
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+      sessionCount++;
+    } catch {
+      // Skip
+    }
+  }
+
+  const inputCostPerMillion = 15;
+  const outputCostPerMillion = 75;
+
+  const totalInputCost = (totalInputTokens / 1_000_000) * inputCostPerMillion;
+  const totalOutputCost = (totalOutputTokens / 1_000_000) * outputCostPerMillion;
+  const totalCost = totalInputCost + totalOutputCost;
+
+  console.log("API Cost Estimate (Claude Sonnet pricing)\n");
+  console.log("═".repeat(50));
+  console.log(`Sessions analyzed: ${sessionCount}`);
+  console.log(`\nToken Usage:`);
+  console.log(`  Input tokens:  ${totalInputTokens.toLocaleString()}`);
+  console.log(`  Output tokens: ${totalOutputTokens.toLocaleString()}`);
+  console.log(`  Total tokens:  ${(totalInputTokens + totalOutputTokens).toLocaleString()}`);
+  console.log(`\nEstimated Cost:`);
+  console.log(`  Input:  $${totalInputCost.toFixed(2)} ($${inputCostPerMillion}/M tokens)`);
+  console.log(`  Output: $${totalOutputCost.toFixed(2)} ($${outputCostPerMillion}/M tokens)`);
+  console.log(`  \x1b[36mTotal:  $${totalCost.toFixed(2)}\x1b[0m\n`);
+
+  const sortedProjects = Array.from(projectCosts.entries())
+    .sort((a, b) => (b[1].input + b[1].output) - (a[1].input + a[1].output))
+    .slice(0, 10);
+
+  if (sortedProjects.length > 0) {
+    console.log("Top Projects by Token Usage:\n");
+    for (const [name, data] of sortedProjects) {
+      const projectTotal = data.input + data.output;
+      const projectCost = ((data.input / 1_000_000) * inputCostPerMillion) + ((data.output / 1_000_000) * outputCostPerMillion);
+      console.log(`  ${name}`);
+      console.log(`    ${projectTotal.toLocaleString()} tokens (~$${projectCost.toFixed(2)}) - ${data.sessions} session(s)`);
+    }
+  }
+
+  console.log("\n\x1b[33mNote: These are estimates based on stored conversation history.\x1b[0m");
+  console.log("\x1b[33mActual costs depend on your API plan and usage patterns.\x1b[0m\n");
+}
+
+async function cmdDiff(sessionId1?: string, sessionId2?: string) {
+  if (!sessionId1 || !sessionId2) {
+    console.error("Usage: cct diff <session-id-1> <session-id-2>");
+    console.error("Example: cct diff abc123 def456");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(PROJECTS_DIR)) {
+    console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
+    process.exit(1);
+  }
+
+  const diff = compareSessionsByCID({ sessionId1, sessionId2 });
+
+  if (!diff) {
+    console.error("One or both sessions not found.");
+    console.error("Use 'cct sessions' to list available sessions.");
+    process.exit(1);
+  }
+
+  console.log(formatSessionDiff(diff));
+}
+
+async function cmdGit() {
+  console.log("Linking sessions to git repositories...\n");
+  const report = linkSessionsToGit();
+  console.log(formatGitLinkReport(report));
+}
+
+async function cmdMcpPerf() {
+  console.log("Analyzing MCP tool performance...\n");
+  const report = analyzeMcpPerformance();
+  console.log(formatMcpPerformanceReport(report));
+}
+
+async function cmdAlerts() {
+  const report = checkAlerts();
+  console.log(formatAlertsReport(report));
+}
+
+async function cmdQuotas() {
+  const quotas = checkQuotas();
+  console.log(formatQuotasReport(quotas));
+}
+
 async function cmdHealth() {
   if (!fs.existsSync(PROJECTS_DIR)) {
     console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
@@ -982,6 +1378,7 @@ async function cmdHealth() {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  let commandResult: unknown;
 
   if (!args.command) {
     printHelp();
@@ -990,7 +1387,7 @@ async function main() {
 
   switch (args.command) {
     case "scan":
-      await cmdScan(args.file);
+      commandResult = await cmdScan(args.file, args.json);
       break;
     case "fix":
       await cmdFix(args.file, args.noBackup);
@@ -1011,7 +1408,7 @@ async function main() {
       await cmdArchive(args.days, args.dryRun);
       break;
     case "maintenance":
-      await cmdMaintenance(args.dryRun, args.auto, args.schedule);
+      await cmdMaintenance(args.auto, args.schedule);
       break;
     case "export":
       await cmdExport(args.file, args.output, args.format, args.withTools);
@@ -1028,14 +1425,29 @@ async function main() {
     case "health":
       await cmdHealth();
       break;
+    case "search":
+      await cmdSearch(args.query, { role: args.role, limit: args.limit, project: args.project, days: args.days });
+      break;
+    case "cost":
+      await cmdCost();
+      break;
     case "clean":
       await cmdClean(args.dryRun, args.days, args.category);
       break;
     case "mcp-validate":
-      await cmdMcpValidate(args.file, args.test);
+      await cmdMcpValidate(args.test);
+      break;
+    case "mcp-perf":
+      await cmdMcpPerf();
       break;
     case "sessions":
       await cmdSessions(args.project);
+      break;
+    case "diff":
+      await cmdDiff(args.file, args.subcommand);
+      break;
+    case "git":
+      await cmdGit();
       break;
     case "recover":
       await cmdRecover(args.file, args.extract, args.repair);
@@ -1043,11 +1455,20 @@ async function main() {
     case "security-scan":
       await cmdSecurityScan(args.file);
       break;
+    case "pii-scan":
+      await cmdPIIScan(args.file, args.details);
+      break;
     case "audit":
       await cmdAudit(args.file);
       break;
     case "retention":
       await cmdRetention(args.days, args.dryRun);
+      break;
+    case "alerts":
+      await cmdAlerts();
+      break;
+    case "quotas":
+      await cmdQuotas();
       break;
     case "trace":
       await cmdTrace(args.subcommand, {
@@ -1060,6 +1481,9 @@ async function main() {
         mode: args.mode,
         install: args.install,
       });
+      break;
+    case "watch":
+      await cmdWatch(args.json, args.interval, args.autoFix);
       break;
     case "dashboard":
       if (args.stop) {
@@ -1075,13 +1499,17 @@ async function main() {
           }
         }
       } else {
-        await startDashboard({ port: args.port, daemon: args.daemon });
+        await startDashboard({ port: args.port, daemon: args.daemon, authToken: args.token });
       }
       break;
     default:
       console.error(`Unknown command: ${args.command}`);
       printHelp();
       process.exit(1);
+  }
+
+  if (args.json && commandResult !== undefined) {
+    console.log(JSON.stringify(commandResult, null, 2));
   }
 }
 

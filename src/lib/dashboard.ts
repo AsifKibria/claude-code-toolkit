@@ -8,7 +8,11 @@ import { analyzeClaudeStorage, cleanClaudeDirectory } from "./storage.js";
 import { listSessions, diagnoseSession, repairSession, extractSessionContent } from "./session-recovery.js";
 import { scanForSecrets, auditSession, enforceRetention, generateComplianceReport } from "./security.js";
 import { inventoryTraces, cleanTraces, wipeAllTraces, generateEnhancedPreview, TraceExclusion } from "./trace.js";
-import { diagnoseMcpServers, probeMcpServer, McpServerCapabilities } from "./mcp-validator.js";
+import { diagnoseMcpServers, probeMcpServer, McpServerCapabilities, analyzeMcpPerformance } from "./mcp-validator.js";
+import { scanForPII, redactPII, redactAllPII } from "./security.js";
+import { checkAlerts, checkQuotas } from "./alerts.js";
+import { linkSessionsToGit } from "./git.js";
+import { searchConversations } from "./search.js";
 import { listLogFiles, parseAllLogs, getLogSummary, LogLevel, LogParseOptions } from "./logs.js";
 import {
   findAllJsonlFiles,
@@ -55,6 +59,7 @@ export interface DashboardOptions {
   port?: number;
   open?: boolean;
   daemon?: boolean;
+  authToken?: string;
 }
 
 type RouteHandler = (params: Record<string, string>) => unknown | Promise<unknown>;
@@ -70,6 +75,24 @@ function parseUrl(url: string): { pathname: string; params: Record<string, strin
     }
   }
   return { pathname, params };
+}
+
+function extractBearerToken(req: http.IncomingMessage, params: Record<string, string>, authToken?: string): boolean {
+  if (!authToken) return true;
+  const header = req.headers["authorization"];
+  if (typeof header === "string" && header.toLowerCase().startsWith("bearer ")) {
+    const provided = header.slice(7).trim();
+    if (provided === authToken) return true;
+  }
+  if (params?.token === authToken) {
+    return true;
+  }
+  return false;
+}
+
+function rejectUnauthorized(res: http.ServerResponse) {
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized" }));
 }
 
 function matchRoute(pathname: string, pattern: string): Record<string, string> | null {
@@ -823,10 +846,11 @@ function getSearch(params: Record<string, string>): Record<string, unknown> {
   const query = params.q || params.query;
   if (!query || query.length < 2) return { results: [], count: 0, error: "Query too short" };
 
+  const roleFilter = params.role || '';
+  const maxResults = Math.min(parseInt(params.limit) || 50, 500);
   const files = findAllJsonlFiles(PROJECTS_DIR);
   const results: any[] = [];
   let count = 0;
-  const maxResults = 50;
 
   const lowerQuery = query.toLowerCase();
 
@@ -839,9 +863,10 @@ function getSearch(params: Record<string, string>): Record<string, unknown> {
         const line = lines[i];
         if (line.toLowerCase().includes(lowerQuery)) {
           let preview = line;
+          let role = 'unknown';
           try {
             const data = JSON.parse(line);
-            // Try to extract readable text
+            role = data.message?.role || data.role || (data.type === 'human' ? 'user' : data.type === 'assistant' ? 'assistant' : 'unknown');
             if (data.message?.content) {
               if (typeof data.message.content === 'string') preview = data.message.content;
               else if (Array.isArray(data.message.content)) preview = data.message.content.map((c: any) => c.text || '').join(' ');
@@ -850,12 +875,15 @@ function getSearch(params: Record<string, string>): Record<string, unknown> {
             }
           } catch { }
 
-          if (preview.length > 200) preview = preview.slice(0, 200) + '...';
+          if (roleFilter && role !== roleFilter) continue;
+
+          if (preview.length > 300) preview = preview.slice(0, 300) + '...';
 
           results.push({
-            file: path.relative(PROJECTS_DIR, file),
+            file,
             line: i + 1,
             preview,
+            role,
             match: true
           });
           count++;
@@ -1041,6 +1069,20 @@ function actionRedactAll(): Record<string, unknown> {
   return { success: true, filesModified, secretsRedacted, errors, items: Array.from(fileGroups.keys()).slice(0, 50) };
 }
 
+function actionRedactPII(body: Record<string, unknown>): Record<string, unknown> {
+  const file = body.file as string;
+  const lineNum = body.line as number;
+  const piiType = body.type as string | undefined;
+  if (!file || !lineNum) return { success: false, error: "file and line required" };
+  const result = redactPII(file, lineNum, piiType);
+  return { ...result };
+}
+
+function actionRedactAllPII(): Record<string, unknown> {
+  const result = redactAllPII();
+  return { ...result };
+}
+
 function actionArchive(body: Record<string, unknown>): Record<string, unknown> {
   const dryRun = body.dryRun !== false;
   const days = (body.days as number) || 30;
@@ -1177,6 +1219,53 @@ const getRoutes: Record<string, RouteHandler> = {
   "/api/maintenance": () => getMaintenanceCheck(),
   "/api/scan": () => getScan(),
   "/api/search": (params) => getSearch(params),
+  "/api/alerts": () => {
+    const report = checkAlerts();
+    return { alerts: report.alerts, critical: report.critical, warning: report.warning, info: report.info };
+  },
+  "/api/quotas": () => {
+    const quotas = checkQuotas();
+    return { quotas };
+  },
+  "/api/mcp-perf": () => {
+    const report = analyzeMcpPerformance();
+    return { totalCalls: report.totalCalls, totalErrors: report.totalErrors, errorRate: report.errorRate, toolStats: report.toolStats, serverStats: Object.fromEntries(report.serverStats) };
+  },
+  "/api/pii": (params) => {
+    const limit = parseInt(params?.limit as string) || 50;
+    const offset = parseInt(params?.offset as string) || 0;
+    const result = scanForPII(undefined, { includeFullValues: true });
+    const paginatedFindings = result.findings.slice(offset, offset + limit);
+    return {
+      filesScanned: result.filesScanned,
+      totalFindings: result.totalFindings,
+      findings: paginatedFindings,
+      byCategory: result.byCategory,
+      bySensitivity: result.bySensitivity,
+      offset,
+      limit,
+      hasMore: offset + limit < result.totalFindings
+    };
+  },
+  "/api/git": () => {
+    const report = linkSessionsToGit();
+    return { sessionsWithGit: report.sessionsWithGit, sessionsWithoutGit: report.sessionsWithoutGit, branches: Object.fromEntries(report.branches), links: report.links.slice(0, 20) };
+  },
+  "/api/cost": () => {
+    const files = findAllJsonlFiles(PROJECTS_DIR);
+    let totalInput = 0, totalOutput = 0;
+    for (const f of files) {
+      try {
+        const est = estimateContextSize(f);
+        const b = est.breakdown;
+        totalInput += b.userTokens + b.systemTokens + b.toolUseTokens;
+        totalOutput += b.assistantTokens + b.toolResultTokens;
+      } catch { /* skip */ }
+    }
+    const inputCost = (totalInput / 1_000_000) * 15;
+    const outputCost = (totalOutput / 1_000_000) * 75;
+    return { inputTokens: totalInput, outputTokens: totalOutput, totalTokens: totalInput + totalOutput, inputCost, outputCost, totalCost: inputCost + outputCost, sessions: files.length };
+  },
   "/api/snapshots": () => ({ snapshots: listStorageSnapshots() }),
   "/api/snapshot": (params) => {
     const id = params?.id as string;
@@ -1207,6 +1296,8 @@ const postRoutes: Record<string, PostHandler> = {
   "/api/action/clean-traces": (b) => actionCleanTraces(b),
   "/api/action/redact": (b) => actionRedact(b),
   "/api/action/redact-all": () => actionRedactAll(),
+  "/api/action/redact-pii": (b) => actionRedactPII(b),
+  "/api/action/redact-all-pii": () => actionRedactAllPII(),
   "/api/action/archive": (b) => actionArchive(b),
   "/api/action/maintenance": (b) => actionMaintenanceRun(b),
   "/api/action/delete-backups": (b) => actionDeleteBackups(b),
@@ -1229,7 +1320,7 @@ const postRoutes: Record<string, PostHandler> = {
   }
 };
 
-export function createDashboardServer(): http.Server {
+export function createDashboardServer(authToken?: string): http.Server {
   const html = generateDashboardHTML();
 
   const server = http.createServer(async (req, res) => {
@@ -1241,7 +1332,56 @@ export function createDashboardServer(): http.Server {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/api/events") {
+      if (!extractBearerToken(req, params, authToken)) {
+        rejectUnauthorized(res);
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+      });
+
+      const sendEvent = (event: string, data: unknown) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      sendEvent("connected", { time: new Date().toISOString() });
+
+      const interval = setInterval(() => {
+        try {
+          const files = findAllJsonlFiles(PROJECTS_DIR);
+          let totalSize = 0;
+          for (const f of files) {
+            try { totalSize += fs.statSync(f).size; } catch { /* skip */ }
+          }
+          sendEvent("stats", {
+            sessions: files.length,
+            totalSize,
+            timestamp: new Date().toISOString(),
+          });
+
+          const alertReport = checkAlerts();
+          if (alertReport.alerts.length > 0) {
+            sendEvent("alerts", { count: alertReport.alerts.length, critical: alertReport.critical });
+          }
+        } catch { /* skip */ }
+      }, 10000);
+
+      req.on("close", () => {
+        clearInterval(interval);
+      });
+
+      return;
+    }
+
     if (req.method === "GET" && pathname.startsWith("/api/")) {
+      if (!extractBearerToken(req, params, authToken)) {
+        rejectUnauthorized(res);
+        return;
+      }
       const handler = getRoutes[pathname];
       if (handler) {
         try {
@@ -1329,6 +1469,10 @@ export function createDashboardServer(): http.Server {
     }
 
     if (req.method === "POST" && pathname.startsWith("/api/action/")) {
+      if (!extractBearerToken(req, params, authToken)) {
+        rejectUnauthorized(res);
+        return;
+      }
       const handler = postRoutes[pathname];
       if (handler) {
         try {
@@ -1355,7 +1499,7 @@ export async function startDashboard(options?: DashboardOptions): Promise<http.S
   const port = options?.port || 1405;
   const shouldOpen = options?.open !== false;
 
-  const server = createDashboardServer();
+  const server = createDashboardServer(options?.authToken);
 
   return new Promise((resolve, reject) => {
     server.on("error", (err: NodeJS.ErrnoException) => {
@@ -1368,6 +1512,9 @@ export async function startDashboard(options?: DashboardOptions): Promise<http.S
     server.listen(port, "127.0.0.1", () => {
       const url = `http://localhost:${port}`;
       console.log(`Dashboard running at ${url}`);
+      if (options?.authToken) {
+        console.log("Authentication required: include the dashboard token in Authorization headers.");
+      }
 
       if (options?.daemon) {
         try {
@@ -1381,8 +1528,13 @@ export async function startDashboard(options?: DashboardOptions): Promise<http.S
 
       if (shouldOpen) {
         const platform = os.platform();
-        const cmd = platform === "darwin" ? "open" : platform === "win32" ? "start" : "xdg-open";
-        execFile(cmd, [url], () => { });
+        if (platform === "win32") {
+          execFile("cmd", ["/c", "start", "", url], () => { });
+        } else if (platform === "darwin") {
+          execFile("open", [url], () => { });
+        } else {
+          execFile("xdg-open", [url], () => { });
+        }
       }
 
       resolve(server);

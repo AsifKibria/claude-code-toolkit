@@ -415,13 +415,16 @@ export function cleanClaudeDirectory(claudeDir = CLAUDE_DIR, options: CleanupOpt
     for (const file of target.files) {
       try {
         const stat = fs.statSync(file);
+        const sizeBeforeDelete = stat.isDirectory() ? getDirStats(file).totalSize : stat.size;
         if (stat.isDirectory()) {
-          fs.rmSync(file, { recursive: true });
+          fs.rmSync(file, { recursive: true, force: true });
         } else {
           fs.unlinkSync(file);
         }
         result.deleted.push(file);
-        result.freed += target.category === "session-env" ? 0 : (stat.isDirectory() ? getDirStats(file).totalSize : stat.size);
+        if (target.category !== "session-env") {
+          result.freed += sizeBeforeDelete;
+        }
       } catch (e) {
         result.errors.push(`Failed to delete ${file}: ${e}`);
       }

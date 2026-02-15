@@ -326,8 +326,10 @@ table tbody tr:hover td { background: var(--accent-glow); }
     <div class="hstat" style="text-align:center" title="Issues found"><div style="font-size:16px;font-weight:700" id="hsIssues">-</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Issues</div></div>
   </div>
   <div class="header-right">
-    <div class="search-bar" style="margin:0 12px 0 0;position:relative">
-      <input type="text" id="globalSearch" class="search-input" placeholder="Search..." style="width:200px;padding:6px 12px;font-size:12px" onkeyup="if(event.key==='Enter') doGlobalSearch(this.value)">
+    <div class="search-bar" style="margin:0 16px 0 0;position:relative;display:flex;align-items:center;background:var(--card);border:2px solid var(--accent);border-radius:var(--radius);padding:2px">
+      <span style="padding:0 8px;color:var(--accent);font-size:16px">🔍</span>
+      <input type="text" id="globalSearch" class="search-input" placeholder="Search all conversations..." style="width:280px;padding:8px 12px;font-size:13px;border:none;background:transparent" onkeyup="if(event.key==='Enter') doGlobalSearch(this.value)">
+      <button class="btn" style="margin:2px;padding:6px 12px;font-size:12px" onclick="doGlobalSearch(document.getElementById('globalSearch').value)">Search</button>
     </div>
     <div class="auto-refresh">
       <label>Auto-refresh</label>
@@ -344,6 +346,7 @@ table tbody tr:hover td { background: var(--accent-glow); }
 </div>
 <div class="nav" id="nav">
   <div class="nav-item active" data-tab="overview">Overview</div>
+  <div class="nav-item" data-tab="search" style="background:var(--accent);color:white;font-weight:600">🔍 Search</div>
   <div class="nav-item" data-tab="storage">Storage</div>
   <div class="nav-item" data-tab="sessions">Sessions</div>
   <div class="nav-item" data-tab="security">Security</div>
@@ -465,14 +468,55 @@ function updateNavBadges(data) {
   addBadge('traces',data.criticalTraces||0,'nav-badge-red');
 }
 
+const TOKEN_STORAGE_KEY = 'cct_dashboard_token';
+
+function getStoredToken() {
+  try { return localStorage.getItem(TOKEN_STORAGE_KEY) || ''; } catch { return ''; }
+}
+function setStoredToken(value) {
+  try {
+    if (value) localStorage.setItem(TOKEN_STORAGE_KEY, value);
+    else localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch { /* ignore */ }
+}
+
+async function promptForToken(message) {
+  const token = window.prompt(message || 'Enter dashboard access token');
+  if (token && token.trim()) {
+    setStoredToken(token.trim());
+    return token.trim();
+  }
+  return null;
+}
+
+async function fetchWithAuth(path, options, retry = true) {
+  const headers = Object.assign({}, options?.headers || {});
+  const token = getStoredToken();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const response = await fetch(path, { ...(options || {}), headers });
+  if (response.status === 401 && retry) {
+    const provided = await promptForToken('Dashboard token required');
+    if (!provided) throw new Error('Unauthorized');
+    headers['Authorization'] = 'Bearer ' + provided;
+    return fetchWithAuth(path, { ...(options || {}), headers }, false);
+  }
+  return response;
+}
+
 const cache = {};
 async function api(ep) {
-  try { const r = await fetch('/api/'+ep); if(!r.ok) throw new Error(r.statusText); const d = await r.json(); cache[ep]=d; return d; }
+  try {
+    const r = await fetchWithAuth('/api/'+ep);
+    if(!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    cache[ep]=d;
+    return d;
+  }
   catch(e) { console.error('API:',ep,e); return cache[ep]||null; }
 }
 async function post(ep, body) {
   try {
-    const r = await fetch('/api/action/'+ep, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) });
+    const r = await fetchWithAuth('/api/action/'+ep, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) });
     if (!r.ok) { console.error('API error:', r.status, r.statusText); return { success: false, error: 'HTTP ' + r.status }; }
     return r.json();
   } catch (e) { console.error('Post error:', e); return { success: false, error: e.message }; }
@@ -689,7 +733,7 @@ function toggleTheme() {
 })();
 
 let currentTab = 'overview';
-const tabOrder=['overview','storage','sessions','security','traces','mcp','logs','config','analytics','backups','context','maintenance','snapshots','about'];
+const tabOrder=['overview','search','storage','sessions','security','traces','mcp','logs','config','analytics','backups','context','maintenance','snapshots','about'];
 $('#nav').addEventListener('click', e => {
   const t = e.target.dataset?.tab; if(!t) return;
   $$('.nav-item').forEach(n=>n.classList.remove('active'));
@@ -728,28 +772,81 @@ async function doGlobalSearch(q) {
   loadSearch();
 }
 
-async function loadSearch() {
+async function loadSearchTab() {
   const el = $('#sec-search');
-  set(el, '<div class="loading"><div class="spinner"></div><div>Searching for "'+esc(currentSearchQuery)+'"...</div></div>');
+  let h = '<h2>🔍 Search All Conversations</h2>';
+  h += '<p style="color:var(--text2);margin-bottom:20px">Search across all your Claude Code conversations to find specific discussions, code snippets, errors, or any text.</p>';
+  h += '<div style="display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap;align-items:center">';
+  h += '<input type="text" id="searchTabInput" class="search-input" placeholder="Enter search term (e.g., API key, function name, error message...)" style="flex:1;min-width:300px;padding:12px 16px;font-size:14px" value="'+esc(currentSearchQuery)+'" onkeyup="if(event.key===\\'Enter\\') doSearchFromTab()">';
+  h += '<select id="searchRole" style="padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)"><option value="">All roles</option><option value="user">User only</option><option value="assistant">Assistant only</option></select>';
+  h += '<input type="number" id="searchLimit" placeholder="Limit" value="50" min="10" max="500" style="width:80px;padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)">';
+  h += '<button class="btn btn-primary" style="padding:12px 24px;font-size:14px" onclick="doSearchFromTab()">🔍 Search</button>';
+  h += '</div>';
+  h += '<div id="searchResults">';
+  if (currentSearchQuery) {
+    h += '<div class="loading"><div class="spinner"></div><div>Searching...</div></div>';
+  } else {
+    h += '<div style="text-align:center;padding:60px;color:var(--text3)">';
+    h += '<div style="font-size:64px;margin-bottom:16px">🔍</div>';
+    h += '<div style="font-size:18px;font-weight:600;margin-bottom:8px">Start Searching</div>';
+    h += '<div>Enter a search term above to find content across all your conversations</div>';
+    h += '</div>';
+  }
+  h += '</div>';
+  set(el, h);
+  if (currentSearchQuery) { setTimeout(() => doSearchFromTab(), 100); }
+}
+async function doSearchFromTab() {
+  const q = $('#searchTabInput')?.value || '';
+  const role = $('#searchRole')?.value || '';
+  const limit = $('#searchLimit')?.value || '50';
+  if (!q || q.length < 2) { toast('Enter at least 2 characters', 'error'); return; }
+  currentSearchQuery = q;
+  const resultsEl = $('#searchResults');
+  if (resultsEl) resultsEl.innerHTML = '<div class="loading"><div class="spinner"></div><div>Searching for "'+esc(q)+'"...</div></div>';
   try {
-    const res = await api('search?q='+encodeURIComponent(currentSearchQuery));
-    if(!res || !res.results || res.results.length === 0) {
-       set(el, emptyState('&#128270;', 'No results found', 'Try a different query', 'Back to Overview', 'loadTab("overview")')); 
-       return;
+    let url = 'search?q='+encodeURIComponent(q)+'&limit='+limit;
+    if (role) url += '&role='+role;
+    const res = await api(url);
+    if (!res || !res.results || res.results.length === 0) {
+      resultsEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:48px;margin-bottom:12px">😕</div><div style="font-size:16px">No results found for "'+esc(q)+'"</div><div style="margin-top:8px">Try different keywords or check spelling</div></div>';
+      return;
     }
-    let h = '<h2>Search Results: "'+esc(currentSearchQuery)+'" ('+res.results.length+')</h2>';
-    h += '<div class="grid" style="grid-template-columns:1fr">'; 
+    let h = '<div style="margin-bottom:16px;padding:12px;background:var(--card);border-radius:var(--radius-sm);border-left:4px solid var(--accent)">';
+    h += '<strong>'+res.results.length+' results</strong> found for "<em>'+esc(q)+'</em>"';
+    h += '</div>';
+    const grouped = {};
     res.results.forEach(r => {
-      h += '<div class="card" style="padding:12px">';
-      h += '<div style="font-weight:600;margin-bottom:6px;font-size:12px;color:var(--accent)">'+esc(r.file)+' <span style="color:var(--text3)">: '+r.line+'</span></div>';
-      h += '<div style="font-family:var(--mono);font-size:11px;color:var(--text2);background:var(--bg);padding:8px;border-radius:4px;overflow-x:auto;white-space:pre-wrap">'+esc(r.preview)+'</div>';
+      const projectMatch = r.file.match(/projects\\/([^\\/]+)/);
+      const project = projectMatch ? projectMatch[1].replace(/-/g, '/') : 'Unknown';
+      if (!grouped[project]) grouped[project] = [];
+      grouped[project].push(r);
+    });
+    Object.entries(grouped).forEach(([project, results]) => {
+      h += '<div class="card" style="margin-bottom:16px;padding:16px">';
+      h += '<div style="font-weight:700;font-size:14px;color:var(--accent);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">📁 '+esc(project)+' <span style="font-weight:400;color:var(--text3)">('+results.length+' matches)</span></div>';
+      results.forEach(r => {
+        const fileName = r.file.split('/').pop();
+        const roleIcon = r.role === 'user' ? '👤' : r.role === 'assistant' ? '🤖' : '📝';
+        h += '<div style="margin-bottom:12px;padding:10px;background:var(--bg);border-radius:var(--radius-sm);border-left:3px solid '+(r.role==='user'?'var(--yellow)':'var(--green)' )+'">';
+        h += '<div style="font-size:11px;color:var(--text3);margin-bottom:6px">'+roleIcon+' <strong>'+esc(r.role||'unknown')+'</strong> • '+esc(fileName)+' • Line '+r.line+'</div>';
+        h += '<div style="font-family:var(--mono);font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-word">'+highlightMatch(esc(r.preview), q)+'</div>';
+        h += '</div>';
+      });
       h += '</div>';
     });
-    h += '</div>';
-    set(el, h);
+    resultsEl.innerHTML = h;
   } catch(e) {
-    set(el, '<div class="empty-state">Error: '+e.message+'</div>');
+    resultsEl.innerHTML = '<div style="color:var(--red);padding:20px">Error: '+e.message+'</div>';
   }
+}
+function highlightMatch(text, query) {
+  if (!query) return text;
+  const parts = text.split(new RegExp('(' + query + ')', 'i'));
+  return parts.map(p => p.toLowerCase() === query.toLowerCase() ? '<mark style="background:var(--yellow);color:var(--bg);padding:1px 3px;border-radius:2px">' + p + '</mark>' : p).join('');
+}
+async function loadSearch() {
+  loadSearchTab();
 }
 
 function healthRing(pct, color) {
@@ -920,7 +1017,7 @@ async function loadSessions() {
 }
 
 async function loadSecurity() {
-  const [d, comp] = await Promise.all([api('security'), api('compliance')]);
+  const [d, comp, pii] = await Promise.all([api('security'), api('compliance'), api('pii')]);
   const el = $('#sec-security');
   if (!d) { set(el, emptyState('&#128274;', 'Security scan unavailable', 'Could not scan for secrets.', 'Retry', 'refreshCurrent()')); return; }
   let h = '<h2>Security Scan</h2>';
@@ -974,6 +1071,46 @@ async function loadSecurity() {
       h += '<div class="detail-row"><span class="detail-key">Secret Findings</span><span class="detail-val ' + (ss.totalFindings > 0 ? 'c-red' : 'c-green') + '">' + (ss.totalFindings || 0) + '</span></div></div>';
     }
     h += '</div>';
+  }
+  if (pii) {
+    h += '<div class="card mt"><h3>&#128100; PII Scan (Personal Identifiable Information)</h3>';
+    h += '<p style="color:var(--text3);font-size:12px;margin:8px 0">Showing exact values and full file paths for all detected PII.</p>';
+    if (pii.totalFindings > 0) {
+      h += '<div class="action-bar" style="margin-top:12px">';
+      h += '<button class="btn btn-danger" onclick="doRedactAllPII()">Redact All PII (' + pii.totalFindings + ')</button>';
+      h += '</div>';
+    }
+    h += '<div class="grid" style="margin-top:12px">';
+    h += '<div class="card"><div class="stat-icon">&#128269;</div><h4>Files Scanned</h4><div class="value">' + pii.filesScanned + '</div></div>';
+    h += '<div class="card"><div class="stat-icon">&#128680;</div><h4>Total Findings</h4><div class="value ' + (pii.totalFindings > 0 ? 'c-orange' : 'c-green') + '">' + pii.totalFindings + '</div></div>';
+    const highCount = pii.bySensitivity?.high || 0;
+    const medCount = pii.bySensitivity?.medium || 0;
+    const lowCount = pii.bySensitivity?.low || 0;
+    h += '<div class="card"><div class="stat-icon">&#128308;</div><h4>High Severity</h4><div class="value ' + (highCount > 0 ? 'c-red' : 'c-green') + '">' + highCount + '</div></div>';
+    h += '<div class="card"><div class="stat-icon">&#128993;</div><h4>Medium</h4><div class="value ' + (medCount > 0 ? 'c-orange' : 'c-green') + '">' + medCount + '</div></div>';
+    h += '</div>';
+    if (pii.byCategory && Object.keys(pii.byCategory).length > 0) {
+      h += '<div style="margin-top:16px"><h4 style="font-size:13px;font-weight:600;margin-bottom:10px">By Category</h4>';
+      h += '<table><tr><th>Category</th><th>Count</th></tr>';
+      Object.entries(pii.byCategory).forEach(([cat, cnt]) => { h += '<tr><td>' + esc(cat) + '</td><td>' + cnt + '</td></tr>'; });
+      h += '</table></div>';
+    }
+    if (pii.findings?.length) {
+      const showing = pii.findings.length;
+      const total = pii.totalFindings;
+      h += '<div style="margin-top:16px"><h4 style="font-size:13px;font-weight:600;margin-bottom:10px">Findings (showing ' + showing + ' of ' + total + ')</h4>';
+      h += '<div id="pii-findings-container">';
+      h += renderPIITable(pii.findings, true);
+      h += '</div>';
+      if (pii.hasMore) {
+        h += '<div style="margin-top:12px;display:flex;gap:8px">';
+        h += '<button class="btn" onclick="loadMorePII(100)">Load 100 More</button>';
+        h += '<button class="btn" onclick="loadMorePII(' + total + ')">Load All (' + total + ')</button>';
+        h += '</div>';
+      }
+    }
+    h += '</div>';
+    window._piiState = { offset: pii.findings?.length || 0, total: pii.totalFindings };
   }
   set(el, h); staggerCards(el); refreshTime();
 }
@@ -1762,6 +1899,61 @@ async function doRedactAll() {
     else { showResult(false, 'Redaction Failed', '<span>' + esc(r.error || 'Unknown error') + '</span>'); }
   });
 }
+async function doRedactPII(file, line, piiType) {
+  showModal('Redact PII', 'This will replace the PII on line ' + line + ' with [PII_REDACTED]. A backup of the file will be created first.', 'Redact', async () => {
+    showProgress('Redacting PII...');
+    const r = await post('redact-pii', { file: file, line: line, type: piiType });
+    if (r.success) { showResult(true, 'PII Redacted', '<span>Items redacted: <strong>' + r.redactedCount + '</strong></span><span>Backup: ' + esc(r.backupPath?.split('/').pop() || 'created') + '</span>', ['security', 'overview'], r.backupPath ? [r.backupPath] : null); }
+    else { showResult(false, 'Redaction Failed', '<span>' + esc(r.error || 'Unknown error') + '</span>'); }
+  });
+}
+async function doRedactAllPII() {
+  showModal('Redact ALL PII', 'This will redact ALL detected personal identifiable information (PII) across ALL conversation files. Backups will be created for each modified file. This action cannot be undone (except by restoring backups).', 'Redact All PII', async () => {
+    showProgress('Redacting all PII...');
+    const r = await post('redact-all-pii');
+    if (r.success) { showResult(true, 'All PII Redacted', '<span>Files modified: <strong>' + r.filesModified + '</strong></span><span>PII items redacted: <strong>' + r.piiRedacted + '</strong></span>' + (r.errors?.length ? '<span class="c-orange">Errors: ' + r.errors.length + '</span>' : ''), ['security', 'overview', 'backups'], r.items); }
+    else { showResult(false, 'Redaction Failed', '<span>' + esc(r.error || 'Unknown error') + '</span>'); }
+  });
+}
+function renderPIITable(findings, showDetails) {
+  let h = '<div style="overflow-x:auto"><table style="width:100%;min-width:900px">';
+  h += '<tr><th style="width:80px">Severity</th><th style="width:100px">Type</th><th style="width:200px">Exact Value</th><th>Full Project Path</th><th style="width:320px">File Location</th><th style="width:80px">Actions</th></tr>';
+  findings.forEach(f => {
+    const sevBadge = f.sensitivity === 'high' ? badge('high', 'red') : f.sensitivity === 'medium' ? badge('medium', 'orange') : badge('low', 'green');
+    const fullFilePath = f.file || '';
+    const fileName = fullFilePath.split('/').pop() || '';
+    const projectMatch = fullFilePath.match(/projects\\/([^\\/]+)/);
+    const projectEncoded = projectMatch ? projectMatch[1] : '';
+    const projectPath = projectEncoded.replace(/-/g, '/');
+    const exactValue = f.fullValue || f.maskedValue || '';
+    const fp = esc(f.file);
+    h += '<tr>';
+    h += '<td>' + sevBadge + '</td>';
+    h += '<td style="font-size:12px">' + esc(f.type) + '</td>';
+    h += '<td class="mono" style="color:var(--red);font-weight:600;word-break:break-all">' + esc(exactValue) + '</td>';
+    h += '<td class="mono" style="word-break:break-all;font-size:11px;color:var(--text2)">' + esc(projectPath) + '</td>';
+    h += '<td class="mono" style="font-size:11px"><div style="word-break:break-all;color:var(--accent)">' + esc(fileName) + '</div><div style="color:var(--text3)">Line <strong>' + f.line + '</strong> • <span style="font-size:10px;opacity:0.7">' + esc(fullFilePath) + '</span></div></td>';
+    h += '<td><button class="btn btn-sm btn-danger" onclick="doRedactPII(\\''+fp+'\\',' + f.line + ',\\''+esc(f.type||'')+'\\')">Redact</button></td>';
+    h += '</tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+async function loadMorePII(count) {
+  if (!window._piiState) return;
+  showProgress('Loading more PII findings...');
+  const pii = await api('pii?limit=' + count + '&offset=0');
+  hideProgress();
+  if (pii) {
+    window._piiState.offset = pii.findings.length;
+    const container = $('#pii-findings-container');
+    if (container) {
+      container.innerHTML = renderPIITable(pii.findings, true);
+      const header = container.previousElementSibling;
+      if (header) header.innerHTML = 'Findings (showing ' + pii.findings.length + ' of ' + pii.totalFindings + ')';
+    }
+  }
+}
 async function doTestMcp() {
   showProgress('Testing MCP servers...');
   const r = await post('test-mcp');
@@ -1993,7 +2185,7 @@ async function doTakeSnapshot() {
   showModal('Take Snapshot', 'Label for this snapshot:', 'Create', async () => {
     const label = $('#snapshotLabelInput')?.value || 'Manual Snapshot';
     showProgress('Taking snapshot...');
-    const r = await post('action/snapshot', { label });
+    const r = await post('snapshot', { label });
     hideProgress();
     if(r.success) { toast('Snapshot created', 'success'); loadSnapshots(); }
     else { toast('Failed: '+r.error, 'error'); }
@@ -2008,7 +2200,7 @@ async function doTakeSnapshot() {
 async function doDeleteSnapshot(id) {
   if(!confirm('Delete this snapshot?')) return;
   showProgress('Deleting...');
-  const r = await post('action/delete-snapshot', { id });
+  const r = await post('delete-snapshot', { id });
   hideProgress();
   if(r.success) { toast('Deleted', 'success'); loadSnapshots(); }
   else { toast('Failed: '+r.error, 'error'); }
@@ -2066,7 +2258,7 @@ async function doCompareSnapshots(id1, id2) {
   showModal('Snapshot Comparison', html, 'Close', null, true);
 }
 
-const loaders = { overview: loadOverview, storage: loadStorage, sessions: loadSessions, security: loadSecurity, traces: loadTraces, mcp: loadMcp, logs: loadLogs, config: loadConfig, analytics: loadAnalytics, backups: loadBackups, context: loadContext, maintenance: loadMaintenance, snapshots: loadSnapshots, about: loadAbout };
+const loaders = { overview: loadOverview, search: loadSearchTab, storage: loadStorage, sessions: loadSessions, security: loadSecurity, traces: loadTraces, mcp: loadMcp, logs: loadLogs, config: loadConfig, analytics: loadAnalytics, backups: loadBackups, context: loadContext, maintenance: loadMaintenance, snapshots: loadSnapshots, about: loadAbout };
 loadTab('overview');
 </script>
   </body>
