@@ -102,7 +102,7 @@ function formatDate(date: Date): string {
 
 function printHelp() {
   console.log(`
-Claude Code Toolkit v1.3.0
+Claude Code Toolkit v1.3.1
 Maintain, optimize, secure, and troubleshoot your Claude Code installation.
 
 USAGE:
@@ -283,7 +283,7 @@ function parseArgs(args: string[]): {
     }
 
     if (arg === "-v" || arg === "--version") {
-      console.log("1.3.0");
+      console.log("1.3.1");
       process.exit(0);
     }
 
