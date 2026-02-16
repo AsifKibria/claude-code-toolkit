@@ -31,6 +31,24 @@ import {
   exportConversation,
 } from "./scanner.js";
 import {
+  addBookmark,
+  removeBookmark,
+  getSessionBookmarks,
+  getAllBookmarks,
+  renameSession,
+  starSession,
+  tagSession,
+  addTagToSession,
+  removeTagFromSession,
+  getSessionTags,
+  getAllTags,
+  getStarredSessions,
+  getBookmarksSummary,
+  clearSessionTags,
+} from "./bookmarks.js";
+import { exportToHtml, bulkExport, EnhancedExportOptions } from "./export.js";
+import { bulkDelete, bulkArchiveSessions, bulkExportSessions } from "./bulk.js";
+import {
   saveStorageSnapshot,
   listStorageSnapshots,
   loadStorageSnapshot,
@@ -1282,6 +1300,32 @@ const getRoutes: Record<string, RouteHandler> = {
     if (!s1 || !s2) return { error: "Snapshots not found" };
     const diff = compareStorageSnapshots(s1.analysis, s2.analysis);
     return { success: true, diff, baseDate: s1.date, currentDate: s2.date };
+  },
+  "/api/bookmarks": () => {
+    const summary = getBookmarksSummary();
+    const allTags = getAllTags();
+    const starred = getStarredSessions();
+    return { ...summary, allTags, starred };
+  },
+  "/api/bookmarks/starred": () => {
+    const starred = getStarredSessions();
+    const sessions = listSessions();
+    return starred.map(s => {
+      const session = sessions.find(sess => sess.id === s.sessionId || sess.id.startsWith(s.sessionId));
+      return {
+        ...s,
+        project: session?.project,
+        messageCount: session?.messageCount,
+        sizeBytes: session?.sizeBytes,
+      };
+    });
+  },
+  "/api/bookmarks/tags": () => getAllTags(),
+  "/api/session/:id/tags": (params) => {
+    const sessionId = params?.id as string;
+    if (!sessionId) return { error: "Session ID required" };
+    const tags = getSessionTags(sessionId);
+    return tags || { sessionId, tags: [], starred: false };
   }
 };
 
@@ -1317,6 +1361,104 @@ const postRoutes: Record<string, PostHandler> = {
     const id = b.id as string;
     if (!id) return { success: false, error: "ID required" };
     return { success: deleteStorageSnapshot(id) };
+  },
+  "/api/action/rename-session": (b) => {
+    const sessionId = b.sessionId as string;
+    const name = b.name as string;
+    if (!sessionId || !name) return { success: false, error: "sessionId and name required" };
+    const result = renameSession(sessionId, name);
+    return { success: true, ...result };
+  },
+  "/api/action/star-session": (b) => {
+    const sessionId = b.sessionId as string;
+    const starred = b.starred !== false;
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const result = starSession(sessionId, starred);
+    return { success: true, ...result };
+  },
+  "/api/action/tag-session": (b) => {
+    const sessionId = b.sessionId as string;
+    const tags = b.tags as string[];
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const result = tagSession(sessionId, { tags });
+    return { success: true, ...result };
+  },
+  "/api/action/add-tag": (b) => {
+    const sessionId = b.sessionId as string;
+    const tag = b.tag as string;
+    if (!sessionId || !tag) return { success: false, error: "sessionId and tag required" };
+    const result = addTagToSession(sessionId, tag);
+    return { success: true, ...result };
+  },
+  "/api/action/remove-tag": (b) => {
+    const sessionId = b.sessionId as string;
+    const tag = b.tag as string;
+    if (!sessionId || !tag) return { success: false, error: "sessionId and tag required" };
+    const result = removeTagFromSession(sessionId, tag);
+    return result ? { success: true, ...result } : { success: false, error: "Session tags not found" };
+  },
+  "/api/action/add-bookmark": (b) => {
+    const sessionId = b.sessionId as string;
+    const lineNumber = b.lineNumber as number;
+    const label = b.label as string | undefined;
+    const preview = b.preview as string | undefined;
+    if (!sessionId || !lineNumber) return { success: false, error: "sessionId and lineNumber required" };
+    const result = addBookmark(sessionId, lineNumber, { label, preview });
+    return { success: true, bookmark: result };
+  },
+  "/api/action/remove-bookmark": (b) => {
+    const bookmarkId = b.bookmarkId as string;
+    if (!bookmarkId) return { success: false, error: "bookmarkId required" };
+    const result = removeBookmark(bookmarkId);
+    return { success: result };
+  },
+  "/api/action/export-html": (b) => {
+    const sessionId = b.sessionId as string;
+    const theme = (b.theme as string) || "light";
+    if (!sessionId) return { success: false, error: "sessionId required" };
+    const sessions = listSessions();
+    const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+    if (!session) return { success: false, error: "Session not found" };
+    const outputPath = session.filePath.replace(".jsonl", ".html");
+    const result = exportToHtml(session.filePath, outputPath, {
+      theme: theme === "dark" ? "dark" : "light",
+      includeTimestamps: true,
+      syntaxHighlighting: true,
+    });
+    return { success: true, file: result.file, messageCount: result.messageCount, size: result.size };
+  },
+  "/api/action/bulk-export": (b) => {
+    const projectFilter = b.projectFilter as string | undefined;
+    const format = (b.format as string) || "html";
+    const result = bulkExportSessions({
+      projectFilter,
+      format: format as "html" | "markdown" | "json",
+    });
+    return { success: true, exported: result.exported.length, errors: result.errors.length, totalMessages: result.totalMessages };
+  },
+  "/api/action/bulk-delete": (b) => {
+    const days = b.days as number | undefined;
+    const projectFilter = b.projectFilter as string | undefined;
+    const dryRun = b.dryRun !== false;
+    const result = bulkDelete({
+      olderThanDays: days,
+      projectFilter,
+      dryRun,
+      includeStarred: false,
+    });
+    return { success: true, deleted: result.deleted.length, skipped: result.skipped.length, totalFreed: result.totalFreed, dryRun, errors: result.errors };
+  },
+  "/api/action/bulk-archive": (b) => {
+    const days = b.days as number | undefined;
+    const projectFilter = b.projectFilter as string | undefined;
+    const dryRun = b.dryRun !== false;
+    const result = bulkArchiveSessions({
+      olderThanDays: days,
+      projectFilter,
+      dryRun,
+      includeStarred: false,
+    });
+    return { success: true, archived: result.archived.length, skipped: result.skipped.length, totalSize: result.totalSize, dryRun, errors: result.errors };
   }
 };
 
@@ -1424,6 +1566,33 @@ export function createDashboardServer(authToken?: string): http.Server {
             res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
             res.end(JSON.stringify(data));
           }
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        }
+        return;
+      }
+
+      const tagsMatch = matchRoute(pathname, "/api/session/:id/tags");
+      if (tagsMatch) {
+        try {
+          const tags = getSessionTags(tagsMatch.id);
+          const data = tags || { sessionId: tagsMatch.id, tags: [], starred: false };
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+          res.end(JSON.stringify(data));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        }
+        return;
+      }
+
+      const bookmarksMatch = matchRoute(pathname, "/api/session/:id/bookmarks");
+      if (bookmarksMatch) {
+        try {
+          const bookmarks = getSessionBookmarks(bookmarksMatch.id);
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+          res.end(JSON.stringify({ bookmarks }));
         } catch (err) {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));

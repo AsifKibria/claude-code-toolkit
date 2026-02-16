@@ -347,6 +347,7 @@ table tbody tr:hover td { background: var(--accent-glow); }
 <div class="nav" id="nav">
   <div class="nav-item active" data-tab="overview">Overview</div>
   <div class="nav-item" data-tab="search" style="background:var(--accent);color:white;font-weight:600">🔍 Search</div>
+  <div class="nav-item" data-tab="bookmarks">⭐ Starred</div>
   <div class="nav-item" data-tab="storage">Storage</div>
   <div class="nav-item" data-tab="sessions">Sessions</div>
   <div class="nav-item" data-tab="security">Security</div>
@@ -389,6 +390,7 @@ table tbody tr:hover td { background: var(--accent-glow); }
   </div>
   <div class="section" id="sec-about"><div class="loading"><div class="spinner"></div><div>Loading...</div></div></div>
   <div class="section" id="sec-search"><div class="loading"><div class="spinner"></div><div>Searching...</div></div></div>
+  <div class="section" id="sec-bookmarks"><div class="loading"><div class="spinner"></div><div>Loading bookmarks...</div></div></div>
 </div>
 <div class="footer">
   <div class="footer-inner">
@@ -733,7 +735,7 @@ function toggleTheme() {
 })();
 
 let currentTab = 'overview';
-const tabOrder=['overview','search','storage','sessions','security','traces','mcp','logs','config','analytics','backups','context','maintenance','snapshots','about'];
+const tabOrder=['overview','search','bookmarks','storage','sessions','security','traces','mcp','logs','config','analytics','backups','context','maintenance','snapshots','about'];
 $('#nav').addEventListener('click', e => {
   const t = e.target.dataset?.tab; if(!t) return;
   $$('.nav-item').forEach(n=>n.classList.remove('active'));
@@ -847,6 +849,160 @@ function highlightMatch(text, query) {
 }
 async function loadSearch() {
   loadSearchTab();
+}
+
+async function loadBookmarks() {
+  const el = $('#sec-bookmarks');
+  const [bookmarksData, sessionsData] = await Promise.all([api('bookmarks'), api('sessions')]);
+  if (!bookmarksData) { set(el, emptyState('⭐', 'No bookmarks data', 'Could not load bookmarks. Try again later.', 'Retry', 'refreshCurrent()')); return; }
+
+  const starred = bookmarksData.starred || [];
+  const allTags = bookmarksData.allTags || [];
+  const totalBookmarks = bookmarksData.totalBookmarks || 0;
+  const sessionsMap = new Map((sessionsData || []).map(s => [s.id, s]));
+
+  let h = '<h2>⭐ Starred Sessions & Bookmarks</h2>';
+  h += '<p style="color:var(--text2);margin-bottom:20px">Star important sessions to keep them safe from bulk operations and easy to find.</p>';
+
+  h += '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">';
+  h += '<div class="card"><div class="stat-icon">⭐</div><h3>Starred</h3><div class="value">' + starred.length + '</div><div class="sub">protected sessions</div></div>';
+  h += '<div class="card"><div class="stat-icon">#</div><h3>Tags</h3><div class="value">' + allTags.length + '</div><div class="sub">unique tags</div></div>';
+  h += '<div class="card"><div class="stat-icon">🔖</div><h3>Bookmarks</h3><div class="value">' + totalBookmarks + '</div><div class="sub">saved locations</div></div>';
+  h += '</div>';
+
+  if (allTags.length > 0) {
+    h += '<h3 style="margin-top:24px">Tags</h3>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px">';
+    for (const t of allTags.slice(0, 20)) {
+      h += '<span style="background:var(--accent);color:white;padding:4px 12px;border-radius:16px;font-size:13px;cursor:pointer" onclick="filterByTag(\\'' + esc(t.tag) + '\\')">#' + esc(t.tag) + ' <span style="opacity:0.8">(' + t.count + ')</span></span>';
+    }
+    h += '</div>';
+  }
+
+  h += '<h3 style="margin-top:24px">Starred Sessions</h3>';
+  if (starred.length === 0) {
+    h += '<div class="card" style="text-align:center;padding:40px;color:var(--text3)">';
+    h += '<div style="font-size:48px;margin-bottom:12px">⭐</div>';
+    h += '<div style="font-size:16px;margin-bottom:8px">No starred sessions yet</div>';
+    h += '<div>Go to Sessions tab and click the star icon to star a session</div>';
+    h += '</div>';
+  } else {
+    h += '<div class="table-wrap"><table><thead><tr><th style="width:40px"></th><th>Name / Project</th><th>Tags</th><th>Messages</th><th>Size</th><th>Actions</th></tr></thead><tbody>';
+    for (const s of starred) {
+      const session = Array.from(sessionsMap.values()).find(sess => sess.id === s.sessionId || sess.id.startsWith(s.sessionId));
+      const name = s.name || (session?.project || s.sessionId.slice(0, 8));
+      const tags = (s.tags || []).map(t => '<span style="background:var(--bg2);padding:2px 8px;border-radius:8px;font-size:11px;margin-right:4px">#' + esc(t) + '</span>').join('');
+      const messages = session?.messageCount || '?';
+      const size = session ? fmtB(session.sizeBytes) : '?';
+      h += '<tr>';
+      h += '<td style="color:var(--yellow);font-size:20px;cursor:pointer" onclick="unstarSession(\\'' + s.sessionId + '\\')">⭐</td>';
+      h += '<td><strong>' + esc(name) + '</strong><br><span style="font-size:11px;color:var(--text3)">' + s.sessionId.slice(0, 12) + '...</span></td>';
+      h += '<td>' + (tags || '<span style="color:var(--text3)">-</span>') + '</td>';
+      h += '<td>' + messages + '</td>';
+      h += '<td>' + size + '</td>';
+      h += '<td>';
+      h += '<button class="btn btn-sm" onclick="renameSessionDialog(\\'' + s.sessionId + '\\', \\'' + esc(name) + '\\')">Rename</button> ';
+      h += '<button class="btn btn-sm" onclick="tagSessionDialog(\\'' + s.sessionId + '\\')">Tag</button> ';
+      h += '<button class="btn btn-sm btn-primary" onclick="exportSessionHtml(\\'' + s.sessionId + '\\')">Export</button>';
+      h += '</td>';
+      h += '</tr>';
+    }
+    h += '</tbody></table></div>';
+  }
+
+  h += '<h3 style="margin-top:32px">Bulk Operations</h3>';
+  h += '<div class="action-bar">';
+  h += '<button class="btn" onclick="bulkExportDialog()">Bulk Export</button>';
+  h += '<button class="btn btn-warn" onclick="bulkArchiveDialog()">Bulk Archive</button>';
+  h += '<button class="btn btn-danger" onclick="bulkDeleteDialog()">Bulk Delete</button>';
+  h += '</div>';
+  h += '<p style="color:var(--text3);font-size:12px;margin-top:8px">Note: Starred sessions are protected from bulk delete and archive operations.</p>';
+
+  set(el, h);
+  staggerCards(el);
+  refreshTime();
+}
+
+async function unstarSession(sessionId) {
+  const r = await post('action/star-session', { sessionId, starred: false });
+  if (r?.success) { toast('Session unstarred', 'success'); loaded['bookmarks'] = false; loadTab('bookmarks'); }
+  else toast('Failed to unstar session', 'error');
+}
+
+async function renameSessionDialog(sessionId, currentName) {
+  const name = prompt('Enter new name for session:', currentName);
+  if (!name) return;
+  const r = await post('action/rename-session', { sessionId, name });
+  if (r?.success) { toast('Session renamed', 'success'); loaded['bookmarks'] = false; loadTab('bookmarks'); }
+  else toast('Failed to rename session', 'error');
+}
+
+async function tagSessionDialog(sessionId) {
+  const tag = prompt('Enter tag to add (or comma-separated tags):');
+  if (!tag) return;
+  const tags = tag.split(',').map(t => t.trim()).filter(Boolean);
+  for (const t of tags) {
+    await post('action/add-tag', { sessionId, tag: t });
+  }
+  toast('Tags added', 'success');
+  loaded['bookmarks'] = false;
+  loadTab('bookmarks');
+}
+
+async function exportSessionHtml(sessionId) {
+  const r = await post('action/export-html', { sessionId, theme: 'light' });
+  if (r?.success) { toast('Exported to ' + r.file, 'success'); }
+  else toast('Failed to export', 'error');
+}
+
+async function bulkExportDialog() {
+  const projectFilter = prompt('Filter by project name (leave empty for all):');
+  showProgress('Exporting sessions...');
+  const r = await post('action/bulk-export', { projectFilter: projectFilter || undefined, format: 'html' });
+  hideProgress();
+  if (r?.success) { toast('Exported ' + r.exported + ' sessions', 'success'); }
+  else toast('Export failed', 'error');
+}
+
+async function bulkArchiveDialog() {
+  const days = prompt('Archive sessions inactive for how many days?', '30');
+  if (!days) return;
+  const projectFilter = prompt('Filter by project name (leave empty for all):');
+  const dryRun = confirm('Preview first? Click OK for dry run, Cancel to archive now.');
+  showProgress('Archiving sessions...');
+  const r = await post('action/bulk-archive', { days: parseInt(days), projectFilter: projectFilter || undefined, dryRun });
+  hideProgress();
+  if (r?.success) {
+    if (r.dryRun) {
+      toast('Would archive ' + r.archived + ' sessions (' + r.skipped + ' skipped). Run without dry-run to execute.', 'info');
+    } else {
+      toast('Archived ' + r.archived + ' sessions', 'success');
+    }
+    loaded['bookmarks'] = false; loadTab('bookmarks');
+  } else toast('Archive failed', 'error');
+}
+
+async function bulkDeleteDialog() {
+  const days = prompt('Delete sessions inactive for how many days?', '60');
+  if (!days) return;
+  const projectFilter = prompt('Filter by project name (leave empty for all):');
+  const dryRun = confirm('Preview first? Click OK for dry run, Cancel to delete now.');
+  showProgress('Processing...');
+  const r = await post('action/bulk-delete', { days: parseInt(days), projectFilter: projectFilter || undefined, dryRun });
+  hideProgress();
+  if (r?.success) {
+    if (r.dryRun) {
+      toast('Would delete ' + r.deleted + ' sessions (' + r.skipped + ' skipped). Starred sessions are protected.', 'info');
+    } else {
+      toast('Deleted ' + r.deleted + ' sessions', 'success');
+    }
+    loaded['sessions'] = false;
+    loaded['bookmarks'] = false;
+  } else toast('Delete failed', 'error');
+}
+
+function filterByTag(tag) {
+  toast('Filtering by #' + tag + ' - this feature is coming soon', 'info');
 }
 
 function healthRing(pct, color) {
@@ -983,7 +1139,7 @@ function renderSessionTable() {
   });
   const sb = s => { if (s === 'healthy') return badge('healthy', 'green'); if (s === 'corrupted') return badge('corrupted', 'red'); if (s === 'empty') return badge('empty', 'yellow'); return badge(s, 'blue'); };
   const sc = (c) => c === col ? (dir === 'asc' ? ' asc' : ' desc') : '';
-  let h = '<tr><th>ID</th><th class="sort-header' + sc('status') + '" onclick="sortSessions(\\'status\\')">Status</th><th class="sort-header' + sc('messages') + '" onclick="sortSessions(\\'messages\\')">Messages</th><th class="sort-header' + sc('size') + '" onclick="sortSessions(\\'size\\')">Size</th><th style="min-width:200px">Project</th><th class="sort-header' + sc('modified') + '" onclick="sortSessions(\\'modified\\')">Last Active</th><th>Actions</th></tr>';
+  let h = '<tr><th style="width:32px">⭐</th><th>ID</th><th class="sort-header' + sc('status') + '" onclick="sortSessions(\\'status\\')">Status</th><th class="sort-header' + sc('messages') + '" onclick="sortSessions(\\'messages\\')">Messages</th><th class="sort-header' + sc('size') + '" onclick="sortSessions(\\'size\\')">Size</th><th style="min-width:200px">Project</th><th class="sort-header' + sc('modified') + '" onclick="sortSessions(\\'modified\\')">Last Active</th><th>Actions</th></tr>';
   h += '<tbody id="sessionTableBody">';
   d.slice(0, 100).forEach(s => {
     const sid = esc(s.id.slice(0, 12));
@@ -993,11 +1149,52 @@ function renderSessionTable() {
     if (s.status === 'corrupted') acts += '<button class="btn btn-sm btn-danger" onclick="doRepair(\\''+esc(s.id)+'\\')">Repair</button> ';
     acts += '<button class="btn btn-sm" onclick="doExtract(\\''+esc(s.id)+'\\')">Extract</button> ';
     acts += '<button class="btn btn-sm btn-primary" onclick="doAudit(\\''+esc(s.id)+'\\')">Audit</button>';
-    h += '<tr data-sid="' + esc(s.id) + '" data-proj="' + esc(s.project || '') + '" data-status="' + esc(s.status) + '"><td class="mono">' + sid + '</td><td>' + sb(s.status) + '</td><td>' + s.messageCount + '</td><td>' + fmtB(s.sizeBytes) + '</td><td>' + projDisplay + '</td><td>' + ago(s.modified) + '</td><td>' + acts + '</td></tr>';
+    const starIcon = '<span class="star-icon" style="cursor:pointer;font-size:18px;opacity:0.3" onclick="toggleStar(event,\\''+esc(s.id)+'\\')">☆</span>';
+    h += '<tr data-sid="' + esc(s.id) + '" data-proj="' + esc(s.project || '') + '" data-status="' + esc(s.status) + '"><td>' + starIcon + '</td><td class="mono">' + sid + '</td><td>' + sb(s.status) + '</td><td>' + s.messageCount + '</td><td>' + fmtB(s.sizeBytes) + '</td><td>' + projDisplay + '</td><td>' + ago(s.modified) + '</td><td>' + acts + '</td></tr>';
   });
-  if (d.length > 100) h += '<tr><td colspan="7" style="text-align:center;color:var(--text3)">...and ' + (d.length - 100) + ' more</td></tr>';
+  if (d.length > 100) h += '<tr><td colspan="8" style="text-align:center;color:var(--text3)">...and ' + (d.length - 100) + ' more</td></tr>';
   h += '</tbody>';
   const tbl = $('#sessionTable'); if (tbl) set(tbl, h);
+  loadSessionStars();
+}
+
+async function loadSessionStars() {
+  try {
+    const bookmarks = await api('bookmarks');
+    const starredIds = new Set((bookmarks?.starred || []).map(s => s.sessionId));
+    $$('.star-icon').forEach(el => {
+      const row = el.closest('tr');
+      const sid = row?.dataset?.sid;
+      if (sid && starredIds.has(sid)) {
+        el.textContent = '⭐';
+        el.style.opacity = '1';
+        el.style.color = 'var(--yellow)';
+      }
+    });
+  } catch { }
+}
+
+async function toggleStar(event, sessionId) {
+  event.stopPropagation();
+  const el = event.target;
+  const isStarred = el.textContent === '⭐';
+  const r = await post('action/star-session', { sessionId, starred: !isStarred });
+  if (r?.success) {
+    if (isStarred) {
+      el.textContent = '☆';
+      el.style.opacity = '0.3';
+      el.style.color = '';
+      toast('Session unstarred', 'success');
+    } else {
+      el.textContent = '⭐';
+      el.style.opacity = '1';
+      el.style.color = 'var(--yellow)';
+      toast('Session starred', 'success');
+    }
+    loaded['bookmarks'] = false;
+  } else {
+    toast('Failed to update star', 'error');
+  }
 }
 async function loadSessions() {
   const d = await api('sessions');
@@ -2258,7 +2455,7 @@ async function doCompareSnapshots(id1, id2) {
   showModal('Snapshot Comparison', html, 'Close', null, true);
 }
 
-const loaders = { overview: loadOverview, search: loadSearchTab, storage: loadStorage, sessions: loadSessions, security: loadSecurity, traces: loadTraces, mcp: loadMcp, logs: loadLogs, config: loadConfig, analytics: loadAnalytics, backups: loadBackups, context: loadContext, maintenance: loadMaintenance, snapshots: loadSnapshots, about: loadAbout };
+const loaders = { overview: loadOverview, search: loadSearchTab, bookmarks: loadBookmarks, storage: loadStorage, sessions: loadSessions, security: loadSecurity, traces: loadTraces, mcp: loadMcp, logs: loadLogs, config: loadConfig, analytics: loadAnalytics, backups: loadBackups, context: loadContext, maintenance: loadMaintenance, snapshots: loadSnapshots, about: loadAbout };
 loadTab('overview');
 </script>
   </body>

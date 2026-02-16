@@ -76,6 +76,28 @@ import { startDashboard, stopDashboard, isDashboardRunning } from "./lib/dashboa
 import { searchConversations, formatSearchReport, SearchOptions, compareSessionsByCID, formatSessionDiff } from "./lib/search.js";
 import { linkSessionsToGit, formatGitLinkReport } from "./lib/git.js";
 import { checkAlerts, checkQuotas, formatAlertsReport, formatQuotasReport } from "./lib/alerts.js";
+import {
+  addBookmark,
+  removeBookmark,
+  getSessionBookmarks,
+  getAllBookmarks,
+  renameSession,
+  starSession,
+  tagSession,
+  addTagToSession,
+  getSessionTags,
+  getAllTags,
+  getStarredSessions,
+  getBookmarksSummary,
+  formatBookmarkReport,
+} from "./lib/bookmarks.js";
+import { exportToHtml, bulkExport } from "./lib/export.js";
+import {
+  bulkDelete,
+  bulkArchiveSessions,
+  bulkExportSessions,
+  formatBulkOperationReport,
+} from "./lib/bulk.js";
 
 function formatContentType(type: IssueType): string {
   switch (type) {
@@ -102,7 +124,7 @@ function formatDate(date: Date): string {
 
 function printHelp() {
   console.log(`
-Claude Code Toolkit v1.3.1
+Claude Code Toolkit v1.4.0
 Maintain, optimize, secure, and troubleshoot your Claude Code installation.
 
 USAGE:
@@ -148,12 +170,30 @@ COMMANDS:
   trace wipe          Secure wipe all traces (requires --confirm)
   trace guard         Generate trace prevention hooks
 
+SESSION MANAGEMENT:
+  rename <id> <name>  Rename a session with a custom name
+  star <id>           Star/unstar a session (--unstar to remove)
+  tag <id> <tags>     Add tags to a session (comma-separated)
+  bookmarks           List all bookmarks and starred sessions
+  starred             List starred sessions
+
+EXPORT & BULK OPERATIONS:
+  export-html <id>    Export session to HTML with syntax highlighting
+                      --theme light|dark, --output <path>
+  bulk-export         Export multiple sessions
+                      --project <filter>, --format html|markdown|json
+  bulk-delete         Delete multiple sessions (with backup)
+                      --days <n>, --project <filter>
+  bulk-archive        Archive multiple sessions
+                      --days <n>, --project <filter>
+
 OPTIONS:
   -f, --file <path>     Target a specific file
   -o, --output <path>   Output file path (for export)
   -q, --query <text>    Search query text
   --role <type>         For search: filter by role (user|assistant|all)
-  --format <type>       Export format: markdown or json (default: markdown)
+  --format <type>       Export format: markdown, json, or html (default: markdown)
+  --theme <type>        For HTML export: light or dark (default: light)
   --with-tools          Include tool results in export
   -d, --dry-run         Show what would be done without making changes
   --no-backup           Skip creating backups when fixing (not recommended)
@@ -237,6 +277,10 @@ function parseArgs(args: string[]): {
   interval: number;
   autoFix: boolean;
   details: boolean;
+  theme: string;
+  unstar: boolean;
+  name?: string;
+  tags?: string;
 } {
   const result = {
     command: "",
@@ -272,6 +316,10 @@ function parseArgs(args: string[]): {
     interval: 15,
     autoFix: false,
     details: false,
+    theme: "light",
+    unstar: false,
+    name: undefined as string | undefined,
+    tags: undefined as string | undefined,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -283,7 +331,7 @@ function parseArgs(args: string[]): {
     }
 
     if (arg === "-v" || arg === "--version") {
-      console.log("1.3.1");
+      console.log("1.4.0");
       process.exit(0);
     }
 
@@ -445,12 +493,22 @@ function parseArgs(args: string[]): {
       continue;
     }
 
+    if (arg === "--theme") {
+      result.theme = args[++i];
+      continue;
+    }
+
+    if (arg === "--unstar") {
+      result.unstar = true;
+      continue;
+    }
+
     if (!arg.startsWith("-") && !result.command) {
       result.command = arg;
       continue;
     }
 
-    if (!arg.startsWith("-") && (result.command === "restore" || result.command === "recover" || result.command === "audit")) {
+    if (!arg.startsWith("-") && (result.command === "restore" || result.command === "recover" || result.command === "audit" || result.command === "export-html")) {
       result.file = arg;
       continue;
     }
@@ -471,6 +529,29 @@ function parseArgs(args: string[]): {
 
     if (!arg.startsWith("-") && result.command === "trace" && !result.subcommand) {
       result.subcommand = arg;
+      continue;
+    }
+
+    if (!arg.startsWith("-") && result.command === "rename") {
+      if (!result.file) {
+        result.file = arg;
+      } else if (!result.name) {
+        result.name = arg;
+      }
+      continue;
+    }
+
+    if (!arg.startsWith("-") && result.command === "star") {
+      result.file = arg;
+      continue;
+    }
+
+    if (!arg.startsWith("-") && result.command === "tag") {
+      if (!result.file) {
+        result.file = arg;
+      } else if (!result.tags) {
+        result.tags = arg;
+      }
       continue;
     }
   }
@@ -1330,6 +1411,198 @@ async function cmdQuotas() {
   console.log(formatQuotasReport(quotas));
 }
 
+async function cmdRename(sessionId?: string, newName?: string) {
+  if (!sessionId || !newName) {
+    console.error("Usage: cct rename <session-id> <new-name>");
+    console.error("Example: cct rename abc123 'API Refactoring Project'");
+    process.exit(1);
+  }
+
+  const sessions = listSessions();
+  const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.error(`Session not found: ${sessionId}`);
+    process.exit(1);
+  }
+
+  const result = renameSession(session.id, newName);
+  console.log(`\x1b[32m✓ Session renamed to: ${newName}\x1b[0m`);
+  console.log(`  Session ID: ${session.id.slice(0, 8)}...`);
+  console.log(`  Project: ${session.project}`);
+}
+
+async function cmdStar(sessionId?: string, unstar?: boolean) {
+  if (!sessionId) {
+    console.error("Usage: cct star <session-id> [--unstar]");
+    console.error("Example: cct star abc123");
+    process.exit(1);
+  }
+
+  const sessions = listSessions();
+  const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.error(`Session not found: ${sessionId}`);
+    process.exit(1);
+  }
+
+  const result = starSession(session.id, !unstar);
+  if (unstar) {
+    console.log(`\x1b[33m✗ Session unstarred\x1b[0m`);
+  } else {
+    console.log(`\x1b[32m⭐ Session starred\x1b[0m`);
+  }
+  console.log(`  Session ID: ${session.id.slice(0, 8)}...`);
+  console.log(`  Project: ${session.project}`);
+}
+
+async function cmdTag(sessionId?: string, tagsInput?: string) {
+  if (!sessionId || !tagsInput) {
+    console.error("Usage: cct tag <session-id> <tags>");
+    console.error("Example: cct tag abc123 'important,api,refactor'");
+    process.exit(1);
+  }
+
+  const sessions = listSessions();
+  const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.error(`Session not found: ${sessionId}`);
+    process.exit(1);
+  }
+
+  const tags = tagsInput.split(",").map(t => t.trim()).filter(Boolean);
+  for (const tag of tags) {
+    addTagToSession(session.id, tag);
+  }
+
+  console.log(`\x1b[32m✓ Tags added: ${tags.map(t => '#' + t).join(', ')}\x1b[0m`);
+  console.log(`  Session ID: ${session.id.slice(0, 8)}...`);
+  console.log(`  Project: ${session.project}`);
+}
+
+async function cmdBookmarks() {
+  const summary = getBookmarksSummary();
+  console.log(formatBookmarkReport(summary));
+
+  const allTags = getAllTags();
+  if (allTags.length > 0) {
+    console.log("\nAll Tags:");
+    for (const { tag, count } of allTags) {
+      console.log(`  #${tag} (${count} session${count === 1 ? '' : 's'})`);
+    }
+  }
+}
+
+async function cmdStarred() {
+  const starred = getStarredSessions();
+
+  if (starred.length === 0) {
+    console.log("No starred sessions found.");
+    console.log("Use 'cct star <session-id>' to star a session.");
+    return;
+  }
+
+  console.log(`Starred Sessions (${starred.length})\n`);
+
+  const sessions = listSessions();
+  for (const tag of starred) {
+    const session = sessions.find(s => s.id === tag.sessionId || s.id.startsWith(tag.sessionId));
+    const name = tag.name || (session ? session.project : tag.sessionId.slice(0, 8));
+    const tags = tag.tags.length > 0 ? ` [${tag.tags.map(t => '#' + t).join(' ')}]` : '';
+
+    console.log(`⭐ ${name}${tags}`);
+    console.log(`   ID: ${tag.sessionId.slice(0, 8)}...`);
+    if (session) {
+      console.log(`   Messages: ${session.messageCount}, Size: ${formatBytes(session.sizeBytes)}`);
+    }
+    console.log();
+  }
+}
+
+async function cmdExportHtml(sessionId?: string, output?: string, theme?: string) {
+  if (!sessionId) {
+    console.error("Usage: cct export-html <session-id> [--output <path>] [--theme light|dark]");
+    console.error("Example: cct export-html abc123 --output ./export.html --theme dark");
+    process.exit(1);
+  }
+
+  const sessions = listSessions();
+  const session = sessions.find(s => s.id === sessionId || s.id.startsWith(sessionId));
+
+  if (!session) {
+    console.error(`Session not found: ${sessionId}`);
+    process.exit(1);
+  }
+
+  const outputPath = output || session.filePath.replace(".jsonl", ".html");
+
+  console.log("Exporting to HTML...");
+  console.log(`  Source: ${session.filePath}`);
+  console.log(`  Output: ${outputPath}`);
+  console.log(`  Theme: ${theme || 'light'}`);
+  console.log();
+
+  const result = exportToHtml(session.filePath, outputPath, {
+    theme: (theme === "dark" ? "dark" : "light"),
+    includeTimestamps: true,
+    syntaxHighlighting: true,
+  });
+
+  console.log(`\x1b[32m✓ Exported ${result.messageCount} messages\x1b[0m`);
+  console.log(`  File: ${result.file}`);
+  console.log(`  Size: ${formatBytes(result.size)}`);
+}
+
+async function cmdBulkExport(projectFilter?: string, format?: string, outputDir?: string) {
+  console.log("Bulk Export\n");
+
+  const result = bulkExportSessions({
+    projectFilter,
+    format: (format as "html" | "markdown" | "json") || "html",
+    outputDir,
+  });
+
+  console.log(formatBulkOperationReport("export", result));
+}
+
+async function cmdBulkDelete(days: number, projectFilter?: string, dryRun?: boolean) {
+  console.log(`Bulk Delete${dryRun ? ' (Dry Run)' : ''}\n`);
+
+  const result = bulkDelete({
+    olderThanDays: days > 0 ? days : undefined,
+    projectFilter,
+    dryRun: dryRun !== false,
+    includeStarred: false,
+  });
+
+  console.log(formatBulkOperationReport("delete", result));
+
+  if (result.dryRun && result.deleted.length > 0) {
+    console.log("\n\x1b[33mRun without --dry-run to delete these sessions.\x1b[0m");
+    console.log("\x1b[33mNote: Starred sessions are protected and won't be deleted.\x1b[0m");
+  }
+}
+
+async function cmdBulkArchive(days: number, projectFilter?: string, dryRun?: boolean) {
+  console.log(`Bulk Archive${dryRun ? ' (Dry Run)' : ''}\n`);
+
+  const result = bulkArchiveSessions({
+    olderThanDays: days > 0 ? days : undefined,
+    projectFilter,
+    dryRun: dryRun !== false,
+    includeStarred: false,
+  });
+
+  console.log(formatBulkOperationReport("archive", result));
+
+  if (result.dryRun && result.archived.length > 0) {
+    console.log("\n\x1b[33mRun without --dry-run to archive these sessions.\x1b[0m");
+    console.log("\x1b[33mNote: Starred sessions are protected and won't be archived.\x1b[0m");
+  }
+}
+
 async function cmdHealth() {
   if (!fs.existsSync(PROJECTS_DIR)) {
     console.error(`Claude projects directory not found: ${PROJECTS_DIR}`);
@@ -1501,6 +1774,33 @@ async function main() {
       } else {
         await startDashboard({ port: args.port, daemon: args.daemon, authToken: args.token });
       }
+      break;
+    case "rename":
+      await cmdRename(args.file, args.name);
+      break;
+    case "star":
+      await cmdStar(args.file, args.unstar);
+      break;
+    case "tag":
+      await cmdTag(args.file, args.tags);
+      break;
+    case "bookmarks":
+      await cmdBookmarks();
+      break;
+    case "starred":
+      await cmdStarred();
+      break;
+    case "export-html":
+      await cmdExportHtml(args.file, args.output, args.theme);
+      break;
+    case "bulk-export":
+      await cmdBulkExport(args.project, args.format, args.output);
+      break;
+    case "bulk-delete":
+      await cmdBulkDelete(args.days, args.project, args.dryRun);
+      break;
+    case "bulk-archive":
+      await cmdBulkArchive(args.days, args.project, args.dryRun);
       break;
     default:
       console.error(`Unknown command: ${args.command}`);
