@@ -3,13 +3,13 @@
 [![npm version](https://img.shields.io/npm/v/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
 [![npm downloads](https://img.shields.io/npm/dm/@asifkibria/claude-code-toolkit.svg)](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub stars](https://img.shields.io/github/stars/nicholasgriffintn/claude-code-toolkit?style=social)](https://github.com/nicholasgriffintn/claude-code-toolkit)
+[![GitHub stars](https://img.shields.io/github/stars/AsifKibria/claude-code-toolkit?style=social)](https://github.com/AsifKibria/claude-code-toolkit)
 
 **The ultimate maintenance toolkit for Claude Code.** Fix broken sessions, search conversations, detect secrets & PII, manage storage, and monitor everything through a beautiful web dashboard.
 
 > **Love this tool?** Give us a star on GitHub! It helps others discover this project and motivates continued development.
 >
-> [![Star on GitHub](https://img.shields.io/badge/-Star%20on%20GitHub-yellow?style=for-the-badge&logo=github)](https://github.com/nicholasgriffintn/claude-code-toolkit)
+> [![Star on GitHub](https://img.shields.io/badge/-Star%20on%20GitHub-yellow?style=for-the-badge&logo=github)](https://github.com/AsifKibria/claude-code-toolkit)
 
 ---
 
@@ -265,7 +265,7 @@ When installed as MCP server, Claude can use these tools directly:
 
 If Claude Code Toolkit has helped you:
 
-- **Star the repo** - It really helps! [![GitHub stars](https://img.shields.io/github/stars/nicholasgriffintn/claude-code-toolkit?style=social)](https://github.com/nicholasgriffintn/claude-code-toolkit)
+- **Star the repo** - It really helps! [![GitHub stars](https://img.shields.io/github/stars/AsifKibria/claude-code-toolkit?style=social)](https://github.com/AsifKibria/claude-code-toolkit)
 - **Share with colleagues** - Help others discover this tool
 - **Report bugs** - Open issues on GitHub
 - **Contribute** - PRs welcome!
@@ -275,8 +275,8 @@ If Claude Code Toolkit has helped you:
 ## Links
 
 - [npm](https://www.npmjs.com/package/@asifkibria/claude-code-toolkit)
-- [GitHub](https://github.com/nicholasgriffintn/claude-code-toolkit)
-- [Issues](https://github.com/nicholasgriffintn/claude-code-toolkit/issues)
+- [GitHub](https://github.com/AsifKibria/claude-code-toolkit)
+- [Issues](https://github.com/AsifKibria/claude-code-toolkit/issues)
 
 ## License
 
