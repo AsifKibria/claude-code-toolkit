@@ -326,10 +326,10 @@ table tbody tr:hover td { background: var(--accent-glow); }
     <div class="hstat" style="text-align:center" title="Issues found"><div style="font-size:16px;font-weight:700" id="hsIssues">-</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Issues</div></div>
   </div>
   <div class="header-right">
-    <div class="search-bar" style="margin:0 16px 0 0;position:relative;display:flex;align-items:center;background:var(--card);border:2px solid var(--accent);border-radius:var(--radius);padding:2px">
-      <span style="padding:0 8px;color:var(--accent);font-size:16px">🔍</span>
-      <input type="text" id="globalSearch" class="search-input" placeholder="Search all conversations..." style="width:280px;padding:8px 12px;font-size:13px;border:none;background:transparent" onkeyup="if(event.key==='Enter') doGlobalSearch(this.value)">
-      <button class="btn" style="margin:2px;padding:6px 12px;font-size:12px" onclick="doGlobalSearch(document.getElementById('globalSearch').value)">Search</button>
+    <div class="search-bar" style="margin:0 16px 0 0;position:relative;display:flex;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:4px 8px">
+      <span style="color:var(--text3);font-size:14px;margin-right:8px">🔍</span>
+      <input type="text" id="globalSearch" class="search-input" placeholder="Search conversations..." style="width:220px;padding:6px 8px;font-size:13px;border:none;background:transparent" onkeyup="if(event.key==='Enter') doGlobalSearch(this.value)" onfocus="this.parentElement.style.borderColor='var(--accent)'" onblur="this.parentElement.style.borderColor='var(--border)'">
+      <button class="btn btn-primary" style="padding:6px 14px;font-size:12px;margin-left:4px" onclick="doGlobalSearch(document.getElementById('globalSearch').value)">Go</button>
     </div>
     <div class="auto-refresh">
       <label>Auto-refresh</label>
@@ -346,7 +346,7 @@ table tbody tr:hover td { background: var(--accent-glow); }
 </div>
 <div class="nav" id="nav">
   <div class="nav-item active" data-tab="overview">Overview</div>
-  <div class="nav-item" data-tab="search" style="background:var(--accent);color:white;font-weight:600">🔍 Search</div>
+  <div class="nav-item" data-tab="search">🔍 Search</div>
   <div class="nav-item" data-tab="bookmarks">⭐ Starred</div>
   <div class="nav-item" data-tab="storage">Storage</div>
   <div class="nav-item" data-tab="sessions">Sessions</div>
@@ -1979,19 +1979,79 @@ function showTraceCategoryFiles(categoryName) {
   const categories = window._traceCategories || [];
   const cat = categories.find(c => c.name === categoryName);
   if (!cat || !cat.allFiles?.length) { toast('No files found for this category', 'info'); return; }
-  let body = '<div style="max-height:500px;overflow-y:auto">';
-  body += '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">' + cat.fileCount + ' files, ' + fmtB(cat.totalSize) + ' total</div>';
-  body += '<table style="width:100%"><tr><th style="text-align:left">Project/File</th><th>Size</th><th>Modified</th><th>Full Path</th></tr>';
-  cat.allFiles.forEach(f => {
+  window._currentTraceCat = categoryName;
+  let body = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">';
+  body += '<div style="font-size:13px;color:var(--text2)">' + cat.fileCount + ' files, ' + fmtB(cat.totalSize) + ' total</div>';
+  body += '<div style="display:flex;gap:8px">';
+  body += '<button class="btn btn-sm" onclick="selectAllTraceFiles()"><input type="checkbox" id="selectAllTrace" style="margin-right:6px">Select All</button>';
+  body += '<button class="btn btn-sm btn-danger" onclick="cleanSelectedTraceFiles()" id="cleanSelectedBtn" disabled>Clean Selected (0)</button>';
+  body += '<button class="btn btn-sm btn-danger" onclick="cleanTraceCategory(\\'' + esc(categoryName) + '\\')">Clean All ' + cat.fileCount + ' Files</button>';
+  body += '</div></div>';
+  body += '<div style="max-height:450px;overflow-y:auto">';
+  body += '<table style="width:100%"><tr><th style="width:30px"></th><th style="text-align:left">Project/File</th><th>Size</th><th>Modified</th></tr>';
+  cat.allFiles.forEach((f, idx) => {
     body += '<tr>';
-    body += '<td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="' + esc(f.fullPath) + '">' + esc(f.projectName || f.path) + '</td>';
+    body += '<td><input type="checkbox" class="trace-file-cb" data-path="' + esc(f.fullPath) + '" data-size="' + f.size + '" onchange="updateTraceSelection()"></td>';
+    body += '<td style="font-size:11px;max-width:250px;overflow:hidden;text-overflow:ellipsis" title="' + esc(f.fullPath) + '">' + esc(f.projectName || f.path) + '</td>';
     body += '<td style="font-size:11px;white-space:nowrap">' + fmtB(f.size) + '</td>';
     body += '<td style="font-size:11px;white-space:nowrap;color:var(--text3)">' + ago(f.modified) + '</td>';
-    body += '<td style="font-size:9px;max-width:300px;word-break:break-all;color:var(--text3)">' + esc(f.fullPath) + '</td>';
     body += '</tr>';
   });
   body += '</table></div>';
   showModal('Files in ' + categoryName + ' (' + cat.fileCount + ')', body, 'Close', null, true);
+}
+function selectAllTraceFiles() {
+  const cb = $('#selectAllTrace');
+  const checked = !cb.checked;
+  cb.checked = checked;
+  document.querySelectorAll('.trace-file-cb').forEach(c => c.checked = checked);
+  updateTraceSelection();
+}
+function updateTraceSelection() {
+  const checked = document.querySelectorAll('.trace-file-cb:checked');
+  const btn = $('#cleanSelectedBtn');
+  if (btn) {
+    btn.disabled = checked.length === 0;
+    let totalSize = 0;
+    checked.forEach(c => totalSize += parseInt(c.dataset.size || '0'));
+    btn.textContent = 'Clean Selected (' + checked.length + ', ' + fmtB(totalSize) + ')';
+  }
+}
+async function cleanSelectedTraceFiles() {
+  const checked = document.querySelectorAll('.trace-file-cb:checked');
+  if (checked.length === 0) return;
+  const files = Array.from(checked).map(c => c.dataset.path);
+  if (!confirm('Delete ' + files.length + ' selected files? This cannot be undone.')) return;
+  showProgress('Deleting ' + files.length + ' files...');
+  try {
+    const result = await post('delete-files', { files });
+    hideProgress();
+    if (result.success) {
+      toast(result.deleted + ' files deleted (' + fmtB(result.freedBytes) + ' freed)', 'success');
+      hideModal();
+      loadTraces();
+    } else {
+      toast('Error: ' + (result.error || 'Delete failed'), 'error');
+    }
+  } catch (e) { hideProgress(); toast('Error: ' + e.message, 'error'); }
+}
+async function cleanTraceCategory(categoryName) {
+  const categories = window._traceCategories || [];
+  const cat = categories.find(c => c.name === categoryName);
+  if (!cat) return;
+  if (!confirm('Delete ALL ' + cat.fileCount + ' files in "' + categoryName + '" (' + fmtB(cat.totalSize) + ')? This cannot be undone.')) return;
+  showProgress('Cleaning ' + categoryName + '...');
+  try {
+    const result = await post('clean-category', { category: categoryName });
+    hideProgress();
+    if (result.success) {
+      toast(result.deleted + ' files deleted (' + fmtB(result.freedBytes) + ' freed)', 'success');
+      hideModal();
+      loadTraces();
+    } else {
+      toast('Error: ' + (result.error || 'Clean failed'), 'error');
+    }
+  } catch (e) { hideProgress(); toast('Error: ' + e.message, 'error'); }
 }
 async function doCleanTracesPreview() {
   showProgress('Analyzing traces...');
@@ -2114,7 +2174,7 @@ async function doRedactAllPII() {
 }
 function renderPIITable(findings, showDetails) {
   let h = '<div style="overflow-x:auto"><table style="width:100%;min-width:900px">';
-  h += '<tr><th style="width:80px">Severity</th><th style="width:100px">Type</th><th style="width:200px">Exact Value</th><th>Full Project Path</th><th style="width:320px">File Location</th><th style="width:80px">Actions</th></tr>';
+  h += '<tr><th style="width:80px">Severity</th><th style="width:100px">Type</th><th style="width:200px">Exact Value</th><th>Full Project Path</th><th style="width:320px">File Location</th><th style="width:140px">Actions</th></tr>';
   findings.forEach(f => {
     const sevBadge = f.sensitivity === 'high' ? badge('high', 'red') : f.sensitivity === 'medium' ? badge('medium', 'orange') : badge('low', 'green');
     const fullFilePath = f.file || '';
@@ -2124,17 +2184,33 @@ function renderPIITable(findings, showDetails) {
     const projectPath = projectEncoded.replace(/-/g, '/');
     const exactValue = f.fullValue || f.maskedValue || '';
     const fp = esc(f.file);
+    const valueForIgnore = btoa(exactValue).replace(/[+/=]/g, '_');
     h += '<tr>';
     h += '<td>' + sevBadge + '</td>';
     h += '<td style="font-size:12px">' + esc(f.type) + '</td>';
     h += '<td class="mono" style="color:var(--red);font-weight:600;word-break:break-all">' + esc(exactValue) + '</td>';
     h += '<td class="mono" style="word-break:break-all;font-size:11px;color:var(--text2)">' + esc(projectPath) + '</td>';
     h += '<td class="mono" style="font-size:11px"><div style="word-break:break-all;color:var(--accent)">' + esc(fileName) + '</div><div style="color:var(--text3)">Line <strong>' + f.line + '</strong> • <span style="font-size:10px;opacity:0.7">' + esc(fullFilePath) + '</span></div></td>';
-    h += '<td><button class="btn btn-sm btn-danger" onclick="doRedactPII(\\''+fp+'\\',' + f.line + ',\\''+esc(f.type||'')+'\\')">Redact</button></td>';
+    h += '<td style="white-space:nowrap"><button class="btn btn-sm btn-danger" onclick="doRedactPII(\\''+fp+'\\',' + f.line + ',\\''+esc(f.type||'')+'\\')">Redact</button> ';
+    h += '<button class="btn btn-sm" onclick="doIgnorePII(\\''+fp+'\\',' + f.line + ',\\''+esc(f.type||'')+'\\',\\''+valueForIgnore+'\\')" title="False positive? Add to ignore list">Ignore</button></td>';
     h += '</tr>';
   });
   h += '</table></div>';
   return h;
+}
+async function doIgnorePII(file, line, type, valueB64) {
+  const value = atob(valueB64.replace(/_/g, '+'));
+  showProgress('Adding to ignore list...');
+  try {
+    const result = await post('ignore-pii', { finding: { file, line, type, value } });
+    hideProgress();
+    if (result.success) {
+      toast('Added to ignore list: ' + result.ignored.slice(0, 30) + '...', 'success');
+      loadSecurity();
+    } else {
+      toast('Error: ' + (result.error || 'Failed to ignore'), 'error');
+    }
+  } catch (e) { hideProgress(); toast('Error: ' + e.message, 'error'); }
 }
 async function loadMorePII(count) {
   if (!window._piiState) return;

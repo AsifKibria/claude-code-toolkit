@@ -1459,6 +1459,67 @@ const postRoutes: Record<string, PostHandler> = {
       includeStarred: false,
     });
     return { success: true, archived: result.archived.length, skipped: result.skipped.length, totalSize: result.totalSize, dryRun, errors: result.errors };
+  },
+  "/api/action/delete-files": (b) => {
+    const files = b.files as string[];
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return { success: false, error: "files array required" };
+    }
+    let deleted = 0;
+    let freedBytes = 0;
+    const errors: string[] = [];
+    for (const filePath of files) {
+      try {
+        if (fs.existsSync(filePath)) {
+          const stat = fs.statSync(filePath);
+          freedBytes += stat.size;
+          fs.unlinkSync(filePath);
+          deleted++;
+        }
+      } catch (e) {
+        errors.push(`${filePath}: ${e}`);
+      }
+    }
+    return { success: true, deleted, freedBytes, errors };
+  },
+  "/api/action/clean-category": (b) => {
+    const category = b.category as string;
+    if (!category) return { success: false, error: "category required" };
+    const traces = inventoryTraces();
+    const cat = traces.categories.find(c => c.name === category);
+    if (!cat || !cat.items) return { success: false, error: "Category not found" };
+    let deleted = 0;
+    let freedBytes = 0;
+    const errors: string[] = [];
+    for (const item of cat.items) {
+      try {
+        if (fs.existsSync(item.path)) {
+          freedBytes += item.size;
+          fs.unlinkSync(item.path);
+          deleted++;
+        }
+      } catch (e) {
+        errors.push(`${item.path}: ${e}`);
+      }
+    }
+    return { success: true, deleted, freedBytes, errors };
+  },
+  "/api/action/ignore-pii": (b) => {
+    const finding = b.finding as { file: string; line: number; type: string; value: string };
+    if (!finding) return { success: false, error: "finding required" };
+    const ignoreFile = path.join(os.homedir(), ".claude", "pii-ignore.json");
+    let ignoreList: Array<{ pattern: string; type: string; reason?: string }> = [];
+    try {
+      if (fs.existsSync(ignoreFile)) {
+        ignoreList = JSON.parse(fs.readFileSync(ignoreFile, "utf-8"));
+      }
+    } catch { /* ignore */ }
+    const pattern = finding.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!ignoreList.some(i => i.pattern === pattern)) {
+      ignoreList.push({ pattern, type: finding.type, reason: "User ignored" });
+      fs.writeFileSync(ignoreFile, JSON.stringify(ignoreList, null, 2));
+    }
+    return { success: true, ignored: pattern };
   }
 };
 

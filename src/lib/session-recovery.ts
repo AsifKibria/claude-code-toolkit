@@ -5,6 +5,27 @@ import * as os from "os";
 const CLAUDE_DIR = path.join(os.homedir(), ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
 
+function quickCountMessages(filePath: string): number {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.split("\n").filter(l => l.trim());
+    let count = 0;
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type === "user" || obj.type === "assistant" || obj.role === "user" || obj.role === "assistant") {
+          count++;
+        }
+      } catch {
+        // skip invalid lines
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 export interface SessionInfo {
   id: string;
   project: string;
@@ -139,12 +160,13 @@ export function listSessions(projectsDir = PROJECTS_DIR, options?: { project?: s
             const sessionDir = path.join(projPath, entry.sessionId);
             const status = quickValidateSession(sessionFile);
 
+            const msgCount = entry.messageCount || quickCountMessages(sessionFile);
             sessions.push({
               id: entry.sessionId,
               project: projDir.name,
               projectPath: indexData.originalPath || entry.projectPath || "",
               filePath: sessionFile,
-              messageCount: entry.messageCount || 0,
+              messageCount: msgCount,
               created: new Date(entry.created || stat.birthtime),
               modified: new Date(entry.modified || stat.mtime),
               sizeBytes: stat.size,
@@ -173,7 +195,7 @@ export function listSessions(projectsDir = PROJECTS_DIR, options?: { project?: s
             project: projDir.name,
             projectPath: "",
             filePath,
-            messageCount: 0,
+            messageCount: quickCountMessages(filePath),
             created: new Date(stat.birthtime),
             modified: new Date(stat.mtime),
             sizeBytes: stat.size,
